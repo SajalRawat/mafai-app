@@ -27,8 +27,6 @@ export default function AllowDenyPage() {
     const [totalPages, setTotalPages] = useState(1);
     const [filters, setFilters] = useState<any>({});
 
-    const [selectedApp, setSelectedApp] = useState<string | null>(null);
-
     React.useEffect(() => {
         const fetchData = async () => {
             try {
@@ -40,9 +38,6 @@ export default function AllowDenyPage() {
                 if (filters.search) params.set("search", filters.search);
                 if (filters.from) params.set("from", filters.from);
                 if (filters.to) params.set("to", filters.to);
-
-                // Add app filter
-                if (selectedApp) params.set("appId", selectedApp);
 
                 if (view === "EVENTS") {
                     url = `/api/events?${params.toString()}`;
@@ -63,7 +58,10 @@ export default function AllowDenyPage() {
                     setTotalPages(meta.totalPages || 1);
 
                     if (view === "EVENTS") {
+
+
                         // ... existing code ...
+
                         const transformed = rawData.map((e: any) => ({
                             ip: e.ip,
                             country: "Unknown",
@@ -96,7 +94,7 @@ export default function AllowDenyPage() {
         fetchData();
         const interval = setInterval(fetchData, 5000);
         return () => clearInterval(interval);
-    }, [view, page, filters, selectedApp]); // Re-fetch when these change
+    }, [view, page, filters]); // Re-fetch when these change
 
     const handleFilterChange = (newFilters: any) => {
         setFilters(newFilters);
@@ -110,11 +108,6 @@ export default function AllowDenyPage() {
                 onViewChange={setView}
                 pageType="ALLOW_DENY"
                 onFilterChange={handleFilterChange}
-                selectedAppId={selectedApp}
-                onAppChange={(id) => {
-                    setSelectedApp(id);
-                    setPage(1);
-                }}
             />
             <SecurityTable
                 view={view}

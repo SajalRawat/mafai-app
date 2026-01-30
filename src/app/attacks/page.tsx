@@ -31,8 +31,6 @@ export default function AttacksPage() {
     const [totalPages, setTotalPages] = useState(1);
     const [filters, setFilters] = useState<any>({});
 
-    const [selectedApp, setSelectedApp] = useState<string | null>(null);
-
     React.useEffect(() => {
         const fetchData = async () => {
             try {
@@ -44,9 +42,6 @@ export default function AttacksPage() {
                 if (filters.search) params.set("search", filters.search);
                 if (filters.from) params.set("from", filters.from);
                 if (filters.to) params.set("to", filters.to);
-
-                // Add app filter
-                if (selectedApp) params.set("appId", selectedApp);
 
                 if (view === "EVENTS") {
                     url = `/api/events?action=BLOCKED&${params.toString()}`;
@@ -96,7 +91,7 @@ export default function AttacksPage() {
         fetchData();
         const interval = setInterval(fetchData, 5000);
         return () => clearInterval(interval);
-    }, [view, page, filters, selectedApp]);
+    }, [view, page, filters]);
 
     const handleFilterChange = (newFilters: any) => {
         setFilters(newFilters);
@@ -110,11 +105,6 @@ export default function AttacksPage() {
                 onViewChange={setView}
                 pageType="ATTACKS"
                 onFilterChange={handleFilterChange}
-                selectedAppId={selectedApp}
-                onAppChange={(id) => {
-                    setSelectedApp(id);
-                    setPage(1);
-                }}
             />
             <SecurityTable
                 view={view}

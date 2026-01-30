@@ -73,7 +73,6 @@ services:
       - maf-network
     restart: always
 
-
   maf-model-puller:
     image: curlimages/curl:latest
     container_name: maf-model-puller

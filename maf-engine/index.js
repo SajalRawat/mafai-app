@@ -1,8 +1,6 @@
 const express = require('express');
-const cors = require('cors');
 const bodyParser = require('body-parser');
-const mongoose = require('mongoose');
-const { createClient } = require('redis');
+const cors = require('cors');
 const pino = require('pino');
 const crypto = require('crypto');
 
@@ -11,192 +9,155 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // --- Configuration ---
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/maf_db';
-const REDIS_URI = process.env.REDIS_URI || 'redis://localhost:6379';
-const MAF_API_URL = process.env.MAF_API_URL || 'http://localhost:3000/api'; // Internal link to Next.js API
+const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://maf-ui:3000'; // Internal Docker URL
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://maf-ai:11434/api/generate';
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- Database Schemas (Inline for simplicity) ---
-// LOG SCHEMA MATCHING src/lib/models/Log.ts
-const LogSchema = new mongoose.Schema({
-    id: { type: String, required: true, unique: true },
-    time: { type: String, required: true },
-    ip: { type: String, required: true },
-    method: { type: String, required: true },
-    uri: { type: String, required: true },
-    status: { type: Number, required: true },
-    size: { type: String, required: true },
-    userAgent: { type: String },
-    referer: { type: String },
-    country: { type: String },
-    attackType: { type: String }, // 'SQL Injection', 'XSS', 'AI Block'
-    aiAnalysis: { type: String },
-    createdAt: { type: Date, default: Date.now },
-    applicationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Application' }
-});
-
-const Log = mongoose.model('Log', LogSchema);
-
-// --- Redis Client ---
-const redisClient = createClient({ url: REDIS_URI });
-redisClient.on('error', (err) => logger.error('Redis Client Error', err));
-redisClient.on('connect', () => logger.info('Connected to Redis'));
+// --- In-Memory Cache (Simple) ---
+const appCache = new Map(); // token -> { config, timestamp }
+const CACHE_TTL = 60 * 1000; // 1 minute
 
 // --- Helper Functions ---
 
-// 1. Validate Token (Ideally we cache this, but for now we hit the API or DB directly)
-// Note: Since we have DB access here, we can skip the HTTP call for speed if we share the DB.
-// Let's use direct DB access for Application model since we are in the same network/repo context usually.
-// OTHERWISE use fetch to MAF_API_URL/validate.
-// DECISION: Use direct DB access for performance and simplicity in this monolithic-style repo setup.
-const ApplicationSchema = new mongoose.Schema({
-    name: String,
-    token: { type: String, index: true },
-    defenseMode: String,
-    aiModel: String,
-    loggingEnabled: Boolean
-});
-const Application = mongoose.model('Application', ApplicationSchema);
+async function getAppConfig(token) {
+    const now = Date.now();
+    const cached = appCache.get(token);
 
-async function validateToken(token) {
-    if (!token) return null;
-    return await Application.findOne({ token }).lean();
+    if (cached && (now - cached.timestamp < CACHE_TTL)) {
+        return cached.config;
+    }
+
+    try {
+        const response = await fetch(`${DASHBOARD_URL}/api/internal/applications/validate?token=${token}`);
+        if (!response.ok) return null;
+
+        const data = await response.json();
+        if (data.valid) {
+            const config = {
+                defenseMode: data.defenseMode,
+                aiModel: data.aiModel || 'mistral'
+            };
+            appCache.set(token, { config, timestamp: now });
+            return config;
+        }
+    } catch (e) {
+        logger.error('Failed to validate token from dashboard', e);
+    }
+    return null;
 }
 
-async function analyzeRequestWithAI(reqData, appConfig) {
+async function analyzeWithAI(reqData, aiModel) {
     try {
         const prompt = `
-        Analyze this HTTP request for security threats:
+        You are a Web Application Firewall (WAF). Analyze this request for security threats:
         Method: ${reqData.method}
-        URL: ${reqData.path}
+        Path: ${reqData.path}
         Headers: ${JSON.stringify(reqData.headers)}
-        Body: ${JSON.stringify(reqData.body).substring(0, 500)}
-        
-        Respond JSON: { "verdict": "BLOCK" | "ALLOW", "reason": "short reason" }
+        Body: ${JSON.stringify(reqData.body).substring(0, 1000)}
+
+        Return ONLY a JSON object:
+        {
+            "threat": boolean,
+            "riskScore": number (0-100),
+            "reason": "short explanation"
+        }
         `;
 
-        const modelToUse = appConfig.aiModel || 'mistral';
+        const response = await fetch(OLLAMA_URL, {
+            method: 'POST',
+            body: JSON.stringify({
+                model: aiModel,
+                prompt: prompt,
+                format: 'json',
+                stream: false
+            })
+        });
 
-        // Mock AI Call for scaffolding - Replace with actual Ollama fetch
-        // In real impl, fetch('http://maf-ai:11434/api/generate', ...)
+        if (!response.ok) throw new Error('Ollama failed');
 
-        // Simulating AI check
-        // if (reqData.path.includes('union+select')) return { verdict: 'BLOCK', reason: 'SQL Injection Detected' };
-
-        return { verdict: 'ALLOW', reason: null };
-
+        const data = await response.json();
+        return JSON.parse(data.response);
     } catch (e) {
-        logger.error("AI Analysis Failed", e);
-        return { verdict: 'ALLOW', reason: 'AI Fail Open' };
+        logger.error('AI Analysis failed', e);
+        return { threat: false, riskScore: 0, reason: 'AI Fail Open' };
     }
 }
 
-async function logRequest(reqData, decision, appConfig) {
-    if (!appConfig.loggingEnabled) return;
-
+async function sendTelemetry(token, reqData, verdict, analysis) {
     try {
         const logEntry = {
             id: crypto.randomUUID(),
+            token,
             time: new Date().toISOString(),
             ip: reqData.ip,
             method: reqData.method,
             uri: reqData.path,
-            status: decision.decision === 'YES' ? 200 : 403, // Pseudo status
+            status: verdict === 'ALLOW' ? 200 : 403,
             size: '0B',
-            userAgent: reqData.headers['user-agent'] || 'unknown',
-            referer: reqData.headers['referer'] || '',
-            country: 'Unknown',
-            attackType: decision.decision === 'NO' ? decision.reason : null,
-            aiAnalysis: decision.reason,
-            createdAt: new Date(),
-            applicationId: appConfig._id
+            userAgent: reqData.headers['user-agent'],
+            attackType: analysis.threat ? analysis.reason : null,
+            aiAnalysis: analysis.reason
         };
 
-        await Log.create(logEntry);
+        fetch(`${DASHBOARD_URL}/api/logs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(logEntry)
+        }).catch(err => logger.error('Telemetry delivery failed', err));
 
-        if (redisClient.isOpen) {
-            await redisClient.publish('maf-logs', JSON.stringify(logEntry));
-        }
     } catch (e) {
-        logger.error("Logging failed", e);
+        logger.error('Failed to prepare telemetry', e);
     }
 }
 
-// --- Main Endpoint ---
+// --- Main Evaluation Route ---
+
 app.post('/evaluate', async (req, res) => {
-    const start = Date.now();
-    const { token, ip, method, path, headers, body } = req.body;
+    const { token, request } = req.body;
 
-    if (!token) {
-        return res.status(400).json({ decision: 'NO', reason: 'Missing Token' });
+    if (!token || !request) {
+        return res.status(400).json({ decision: 'YES', reason: 'Invalid payload' });
     }
 
     try {
-        const appConfig = await validateToken(token);
+        const config = await getAppConfig(token);
 
-        if (!appConfig) {
-            return res.status(401).json({ decision: 'NO', reason: 'Invalid Token' });
+        if (!config) {
+            return res.status(401).json({ decision: 'NO', reason: 'Invalid Application Token' });
         }
 
-        if (appConfig.defenseMode === 'Offline') {
-            // Offline usually means "System is off", so maybe Open/Allow or Block? 
-            // "Offline" in WAF context often means "WAF is bypassed/off" -> ALLOW. 
-            // But if it means "App is offline", then BLOCK. 
-            // Let's assume Offline = Functionality Disabled = WAF Disabled (ALLOW) or Service Down (BLOCK)?
-            // Given the context of "Defense Mode", Offline usually means "Traffic continues without inspection" OR "Traffic is stopped".
-            // Let's go with "WAF Disabled / Bypassed" -> ALLOW.
-            // Wait, user used 'Offline' in UI which implies "Service Offline" text in previous code.
-            // Previous code: res.end('Service Offline'). So it BLOCKS traffic.
-            return res.json({ decision: 'NO', reason: 'Service Unavailable (Offline Mode)' });
+        // 1. Offline Mode handling
+        if (config.defenseMode === 'OFFLINE') {
+            return res.json({ decision: 'YES', reason: 'Protection Disabled (Offline)' });
         }
 
-        let decision = { decision: 'YES', reason: null };
+        // 2. AI Analysis
+        const analysis = await analyzeWithAI(request, config.aiModel);
 
-        if (appConfig.defenseMode === 'Defense' || appConfig.defenseMode === 'Audited') {
-            // Run Analysis
-            const aiResult = await analyzeRequestWithAI({ ip, method, path, headers, body }, appConfig);
-
-            if (aiResult.verdict === 'BLOCK') {
-                if (appConfig.defenseMode === 'Defense') {
-                    decision = { decision: 'NO', reason: aiResult.reason };
-                } else {
-                    // Audited: Log it but allow
-                    decision = { decision: 'YES', reason: `[AUDIT] ${aiResult.reason}` };
-                }
-            }
+        let decision = 'YES';
+        if (analysis.threat && config.defenseMode === 'DEFENSE') {
+            decision = 'NO';
         }
 
-        // Async Logging
-        logRequest({ ip, method, path, headers, body }, decision, appConfig);
+        // 3. Telemetry (Async)
+        sendTelemetry(token, request, decision, analysis);
 
-        res.json(decision);
-
-    } catch (e) {
-        logger.error("Evaluation Error", e);
-        // Fail Open
-        res.json({ decision: 'YES', reason: 'Internal Error (Fail Open)' });
-    }
-});
-
-app.get('/health', (req, res) => res.send('MAF Engine Active'));
-
-// --- Init ---
-async function init() {
-    try {
-        await mongoose.connect(MONGODB_URI);
-        logger.info('Connected to MongoDB');
-        await redisClient.connect();
-
-        app.listen(PORT, () => {
-            logger.info(`MAF Decision Engine listening on port ${PORT}`);
+        res.json({
+            decision,
+            riskScore: analysis.riskScore,
+            reason: analysis.reason
         });
 
     } catch (e) {
-        logger.error("Init Failed", e);
-        process.exit(1);
+        logger.error('Critical evaluation error', e);
+        res.json({ decision: 'YES', reason: 'Internal Engine Error (Fail Open)' });
     }
-}
+});
 
-init();
+app.get('/health', (req, res) => res.json({ status: 'active' }));
+
+app.listen(PORT, () => {
+    logger.info(`MAF Decision Engine listening on port ${PORT}`);
+});

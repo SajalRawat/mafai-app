@@ -7,12 +7,12 @@ import { useState } from "react";
 interface DefenseModeModalProps {
     isOpen: boolean;
     onClose: () => void;
-    currentMode: "Defense" | "Audited" | "Offline";
-    onSave: (mode: "Defense" | "Audited" | "Offline") => Promise<void>;
+    currentMode: "DEFENSE" | "AUDITED" | "OFFLINE";
+    onSave: (mode: "DEFENSE" | "AUDITED" | "OFFLINE") => Promise<void>;
 }
 
 export function DefenseModeModal({ isOpen, onClose, currentMode, onSave }: DefenseModeModalProps) {
-    const [selectedMode, setSelectedMode] = useState<"Defense" | "Audited" | "Offline">(currentMode);
+    const [selectedMode, setSelectedMode] = useState<"DEFENSE" | "AUDITED" | "OFFLINE">(currentMode);
     const [loading, setLoading] = useState(false);
 
     if (!isOpen) return null;
@@ -31,9 +31,9 @@ export function DefenseModeModal({ isOpen, onClose, currentMode, onSave }: Defen
 
     const modes = [
         {
-            id: "Defense",
+            id: "DEFENSE",
             title: "Defense mode",
-            desc: "Attacks will be blocked",
+            desc: "Active blocking of malicious requests. Threats are logged and denied.",
             icon: Shield,
             color: "text-teal-500",
             bg: "bg-teal-50",
@@ -41,9 +41,9 @@ export function DefenseModeModal({ isOpen, onClose, currentMode, onSave }: Defen
             ring: "ring-teal-500/20"
         },
         {
-            id: "Audited",
+            id: "AUDITED",
             title: "Audited mode",
-            desc: "Log traffic only (No AI Analysis)",
+            desc: "Passive monitoring. Malicious requests are allowed but flagged and logged.",
             icon: Eye,
             color: "text-amber-500",
             bg: "bg-amber-50",
@@ -51,9 +51,9 @@ export function DefenseModeModal({ isOpen, onClose, currentMode, onSave }: Defen
             ring: "ring-amber-500/20"
         },
         {
-            id: "Offline",
+            id: "OFFLINE",
             title: "Offline mode",
-            desc: "All users will be blocked",
+            desc: "Protection is disabled. All traffic passes through without inspection.",
             icon: WifiOff,
             color: "text-red-500",
             bg: "bg-red-50",

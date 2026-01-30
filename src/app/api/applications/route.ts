@@ -21,30 +21,29 @@ export async function POST(request: Request) {
 
     try {
         const body = await request.json();
-        logger.info('Creating new application', { body });
+        const { name } = body;
 
-        // Basic validation
-        if (!body.name) {
+        if (!name) {
             return NextResponse.json({ success: false, error: 'Application Name is required' }, { status: 400 });
         }
 
-        const token = body.token || `maf_sk_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+        // Auto-generate token
+        const token = `maf_sk_${Math.random().toString(36).substring(2, 11)}_${Date.now()}`;
 
         const app = await Application.create({
-            name: body.name,
+            name: name.trim(),
             token,
-            defenseMode: body.defenseMode || 'Defense',
-            loggingEnabled: body.loggingEnabled !== undefined ? body.loggingEnabled : true,
-            aiModel: body.aiModel || 'mistral'
+            defenseMode: 'DEFENSE',
+            aiModel: 'mistral'
         });
 
-        logger.info('Application created successfully', { id: app._id, token });
-        // await redis.publish('maf-config-reload', 'created'); // Engine is now pull-based or event-based, but keep publish for legacy or dashboard updates if needed
+        logger.info('Application created successfully', { id: app._id, name: app.name });
+        await redis.publish('maf-config-reload', 'created');
 
         return NextResponse.json({ success: true, data: app }, { status: 201 });
     } catch (error) {
         logger.error('Failed to create application', error);
-        return NextResponse.json({ success: false, error: 'Failed to create application' }, { status: 400 });
+        return NextResponse.json({ success: false, error: 'Failed to create application' }, { status: 500 });
     }
 }
 

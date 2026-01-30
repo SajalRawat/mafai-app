@@ -116,15 +116,12 @@ export default function ApplicationsPage() {
                             app={{
                                 id: app._id,
                                 name: app.name,
-                                domain: app.domain,
-                                port: (app.ports || []).map(p => `${p.port}/${p.protocol}`).join(' '),
-                                token: (app as any).token, // Pass token
-                                defenseStatus: app.defenseStatus,
-                                defenseMode: (app as any).defenseMode, // Map defenseMode
+                                token: (app as any).token,
+                                defenseMode: (app as any).defenseMode || 'DEFENSE',
                                 rqs: 0,
                                 blk: 0,
                                 tags: ["Protection Active"],
-                                icon: app.type === 'Reverse Proxy' ? Globe : Shield,
+                                icon: Shield,
                                 raw: app
                             }}
                             onEdit={() => handleEdit(app)}

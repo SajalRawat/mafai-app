@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 export interface ILog extends mongoose.Document {
     id: string;
+    token: string;
     time: string;
     ip: string;
     method: string;
@@ -18,6 +19,7 @@ export interface ILog extends mongoose.Document {
 
 const LogSchema = new mongoose.Schema<ILog>({
     id: { type: String, required: true, unique: true },
+    token: { type: String, required: true, index: true },
     time: { type: String, required: true },
     ip: { type: String, required: true },
     method: { type: String, required: true },

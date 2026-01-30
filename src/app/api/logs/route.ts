@@ -11,6 +11,7 @@ export async function GET(request: Request) {
 
     try {
         const { searchParams } = new URL(request.url);
+        const token = searchParams.get('token');
         const status = searchParams.get('status');
         const search = searchParams.get('search');
         const from = searchParams.get('from');
@@ -21,6 +22,11 @@ export async function GET(request: Request) {
         const skip = (page - 1) * limit;
 
         const filter: any = {};
+
+        // Token Filter (Required in new architecture for scoping)
+        if (token) {
+            filter.token = token;
+        }
 
         // Status Filter
         if (status) {
@@ -41,16 +47,11 @@ export async function GET(request: Request) {
         // Time Filter
         if (from || to) {
             filter.time = {};
-            if (from) filter.time.$gte = from; // Expect ISO string
-            if (to) filter.time.$lte = to;     // Expect ISO string
+            if (from) filter.time.$gte = from;
+            if (to) filter.time.$lte = to;
         }
 
-        const mongooseInstance = await dbConnect();
-        console.log("[API DEBUG] DB Name:", mongooseInstance.connection.name);
-        console.log("[API DEBUG] Filter:", JSON.stringify(filter, null, 2));
-
         const total = await Log.countDocuments(filter);
-        console.log("[API DEBUG] Total Logs Found:", total);
         const logs = await Log.find(filter)
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -76,13 +77,15 @@ export async function POST(request: Request) {
 
     try {
         const body = await request.json();
-        logger.info('Received new log entry', { body });
+
+        if (!body.token) {
+            return NextResponse.json({ success: false, error: 'Application token is required' }, { status: 400 });
+        }
 
         const log = await Log.create(body);
 
-        // Invalidate cache
-        await redis.del('maf:logs:recent');
-        logger.info('Log created and cache invalidated');
+        // Notify via Redis for real-time dashboard updates if listeners exist
+        await redis.publish('maf-logs', JSON.stringify(log));
 
         return NextResponse.json({ success: true, data: log }, { status: 201 });
     } catch (error) {

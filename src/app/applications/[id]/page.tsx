@@ -2,33 +2,29 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Shield, ShieldAlert, Activity, FileText, Settings, Trash2, Copy, Check } from "lucide-react";
+import { Globe, Shield, ArrowLeft, RefreshCcw, MoreHorizontal, Settings, FileText, Activity, Lock, Users, Zap, Terminal, ShieldAlert } from "lucide-react";
 import { DefenseModeModal } from "@/components/applications/DefenseModeModal";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 interface Application {
     _id: string;
     name: string;
-    defenseMode?: "Defense" | "Audited" | "Offline";
-    defenseStatus: boolean;
-    loggingEnabled: boolean;
+    token: string;
+    defenseMode: "DEFENSE" | "AUDITED" | "OFFLINE";
     aiModel?: string;
-    aiSystemPrompt?: string;
-    policyHistory?: any[];
-    token?: string;
+    createdAt: string;
 }
 
 export default function ApplicationDetailPage() {
     const params = useParams();
-    const router = useRouter();
     const [app, setApp] = useState<Application | null>(null);
     const [loading, setLoading] = useState(true);
     const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
-
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'LOGS' | 'SETTINGS'>('DASHBOARD');
-    const [tokenCopied, setTokenCopied] = useState(false);
+    const [activeTab, setActiveTab] = useState<'BASIC' | 'ADVANCED' | 'AI_POLICY'>('BASIC');
+    const [systemPrompt, setSystemPrompt] = useState("");
+    const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     useEffect(() => {
         if (params.id) {
@@ -41,16 +37,7 @@ export default function ApplicationDetailPage() {
             const res = await fetch(`/api/applications?id=${id}`);
             const data = await res.json();
             if (data.data) {
-                // If the API returns a list (which strictly it shouldn't if id is passed but current API structure is loose), find it.
-                // If it returns a single object, use it.
-                if (Array.isArray(data.data)) {
-                    const found = data.data.find((a: any) => a._id === id || a.id === id);
-                    setApp(found);
-                } else {
-                    setApp(data.data);
-                }
-            } else if (Array.isArray(data)) {
-                const found = data.find((a: any) => a._id === id || a.id === id);
+                const found = data.data.find((a: any) => a._id === id || a.id === id);
                 setApp(found);
             }
         } catch (e) {
@@ -60,7 +47,14 @@ export default function ApplicationDetailPage() {
         }
     };
 
-    const handleDefenseModeSave = async (mode: "Defense" | "Audited" | "Offline") => {
+    const copyToken = () => {
+        if (!app?.token) return;
+        navigator.clipboard.writeText(app.token);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    const handleDefenseModeSave = async (mode: "DEFENSE" | "AUDITED" | "OFFLINE") => {
         if (!app) return;
         try {
             const res = await fetch('/api/applications', {
@@ -68,208 +62,167 @@ export default function ApplicationDetailPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ id: app._id, defenseMode: mode })
             });
-            if (res.ok) {
-                fetchApp(app._id);
-                setIsDefenseModalOpen(false);
-            }
+            if (res.ok) fetchApp(app._id);
         } catch (e) {
-            alert("Failed to update defense mode");
+            alert("Failed to update");
         }
     };
 
-    const handleDelete = async () => {
-        if (!app || !confirm("Are you sure you want to delete this application? This action cannot be undone.")) return;
-        try {
-            const res = await fetch(`/api/applications?id=${app._id}`, {
-                method: 'DELETE',
-            });
-            if (res.ok) {
-                router.push('/applications');
-            } else {
-                alert("Failed to delete application");
-            }
-        } catch (e) {
-            console.error(e);
-            alert("Error deleting application");
-        }
-    };
-
-    const copyToken = () => {
-        if (app?.token) {
-            navigator.clipboard.writeText(app.token);
-            setTokenCopied(true);
-            setTimeout(() => setTokenCopied(false), 2000);
-        }
-    };
-
-    if (loading) return <div className="p-10 text-center text-slate-500">Loading Application...</div>;
-    if (!app) return <div className="p-10 text-center text-red-500">Application not found</div>;
+    if (loading) return <div className="p-10 text-center font-mono text-slate-500">Initializing Security Context...</div>;
+    if (!app) return <div className="p-10 text-center text-red-500 font-bold">APPLICATION NOT FOUND</div>;
 
     return (
         <div className="p-6 max-w-[1600px] mx-auto min-h-screen space-y-6">
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
+            <div className="flex items-center gap-2 text-sm text-slate-500 font-bold uppercase tracking-wider">
                 <Link href="/applications" className="hover:text-teal-500 transition-colors">Applications</Link>
-                <span>/</span>
-                <span className="text-slate-900">Detail</span>
+                <div className="w-1 h-1 rounded-full bg-slate-300" />
+                <span className="text-slate-900">{app.name}</span>
             </div>
 
-            {/* Header Card */}
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
-                <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-                    <div className="flex items-center gap-5">
-                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white shadow-lg flex-shrink-0">
-                            <Shield className="w-8 h-8" />
-                        </div>
-                        <div>
-                            <h1 className="text-2xl font-bold text-slate-900">{app.name}</h1>
-                            <div className="flex items-center gap-3 mt-2">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">TOKEN</span>
-                                <div className="flex items-center bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-200 group hover:border-teal-200 transition-colors">
-                                    <code className="text-sm font-mono text-slate-600">{app.token || 'Generating...'}</code>
-                                    <button
-                                        onClick={copyToken}
-                                        className="ml-3 text-slate-400 hover:text-teal-600 transition-colors"
-                                        title="Copy Token"
-                                    >
-                                        {tokenCopied ? <Check className="w-4 h-4 text-teal-600" /> : <Copy className="w-4 h-4" />}
-                                    </button>
-                                </div>
-                            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-8 flex items-center justify-between">
+                <div className="flex items-center gap-6">
+                    <div className="w-14 h-14 rounded-2xl bg-teal-500 flex items-center justify-center shadow-lg shadow-teal-200">
+                        <Shield className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                            {app.name}
+                            <div className={cn("w-2 h-2 rounded-full", app.defenseMode === 'OFFLINE' ? "bg-red-500" : "bg-emerald-500 animate-pulse")} />
+                        </h1>
+                        <div className="flex items-center gap-3 mt-1.5">
+                            <code className="text-[11px] font-mono font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded">
+                                {app.token}
+                            </code>
+                            <button
+                                onClick={copyToken}
+                                className="text-[10px] font-bold text-teal-500 hover:text-teal-600 uppercase tracking-widest transition-colors"
+                            >
+                                {copied ? "COPIED" : "COPY TOKEN"}
+                            </button>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setIsDefenseModalOpen(true)}
-                            className={cn(
-                                "px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wide border transition-all shadow-sm hover:shadow",
-                                app.defenseMode === 'Audited' ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" :
-                                    app.defenseMode === 'Offline' ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200" :
-                                        "bg-teal-50 text-teal-600 border-teal-200 hover:bg-teal-100"
-                            )}>
-                            <div className="flex items-center gap-2">
-                                <div className={cn("w-2 h-2 rounded-full animate-pulse",
-                                    app.defenseMode === 'Audited' ? "bg-amber-500" :
-                                        app.defenseMode === 'Offline' ? "bg-slate-400" : "bg-teal-500"
-                                )} />
-                                {app.defenseMode || 'DEFENSE'} MODE
-                            </div>
-                        </button>
+                </div>
+
+                <div className="flex items-center gap-8">
+                    <button
+                        onClick={() => setIsDefenseModalOpen(true)}
+                        className={cn(
+                            "px-6 py-2.5 rounded-lg font-black text-xs tracking-widest uppercase transition-all flex items-center gap-3 shadow-sm border",
+                            app.defenseMode === 'DEFENSE' ? "bg-teal-500 border-teal-500 text-white hover:bg-teal-600" :
+                                app.defenseMode === 'AUDITED' ? "bg-amber-500 border-amber-500 text-white hover:bg-amber-600" :
+                                    "bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200"
+                        )}
+                    >
+                        {app.defenseMode} MODE
+                        <Settings className="w-4 h-4" />
+                    </button>
+
+                    <div className="h-10 w-[1px] bg-slate-100" />
+
+                    <div className="flex gap-10">
+                        <div className="text-right">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Status</div>
+                            <div className="text-sm font-black text-emerald-500 uppercase">ACTIVE</div>
+                        </div>
+                        <div className="text-right">
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Decisions Today</div>
+                            <div className="text-sm font-black text-slate-900">0</div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Tabs Navigation */}
-            <div className="flex gap-1 border-b border-slate-200">
-                {['DASHBOARD', 'LOGS', 'SETTINGS'].map((tab) => (
+            <div className="flex gap-1 border-b border-slate-200 h-12">
+                {[
+                    { id: 'BASIC', label: 'Identity', icon: Lock },
+                    { id: 'AI_POLICY', label: 'Security Policy', icon: Terminal },
+                    { id: 'ADVANCED', label: 'Developer', icon: Shield }
+                ].map((tab) => (
                     <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab as any)}
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
                         className={cn(
-                            "px-6 py-3 text-sm font-bold transition-all uppercase border-t border-x rounded-t-lg mb-[-1px] relative",
-                            activeTab === tab
-                                ? "bg-white border-slate-200 border-b-white text-teal-600"
-                                : "bg-slate-50 border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                            "px-8 flex items-center gap-2 text-xs font-black tracking-widest uppercase transition-all relative",
+                            activeTab === tab.id ? "text-teal-500" : "text-slate-400 hover:text-slate-600"
                         )}
                     >
-                        {tab}
+                        <tab.icon className="w-3.5 h-3.5" />
+                        {tab.label}
+                        {activeTab === tab.id && (
+                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-teal-500 rounded-t-full" />
+                        )}
                     </button>
                 ))}
             </div>
 
-            {/* Tab Content */}
-            <div className="space-y-6">
-
-                {/* DASHBOARD TAB */}
-                {activeTab === 'DASHBOARD' && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Stat Card 1 */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="p-2 bg-blue-50 rounded-lg">
-                                    <Activity className="w-5 h-5 text-blue-500" />
+            <div className="bg-white rounded-b-xl border border-slate-100 shadow-sm p-10">
+                {activeTab === 'BASIC' && (
+                    <div className="grid grid-cols-2 gap-16">
+                        <div className="space-y-8">
+                            <div>
+                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-6">Application Integrity</h3>
+                                <div className="space-y-6">
+                                    <div className="flex flex-col gap-1.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Service Name</span>
+                                        <span className="text-base font-bold text-slate-800">{app.name}</span>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Platform Key</span>
+                                        <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between">
+                                            <code className="text-sm font-mono font-bold text-slate-600">{app.token}</code>
+                                            <button onClick={copyToken} className="p-1.5 hover:bg-white rounded transition-colors">
+                                                <RefreshCcw className="w-4 h-4 text-slate-400" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detection Engine</span>
+                                        <span className="text-sm font-bold text-purple-600 font-mono bg-purple-50 w-fit px-2 py-1 rounded">
+                                            {app.aiModel || 'mistral'}-v1.0 (LOCAL)
+                                        </span>
+                                    </div>
                                 </div>
-                                <span className="text-xs font-bold text-slate-400 uppercase">24H</span>
                             </div>
-                            <div className="text-3xl font-black text-slate-900 mb-1">0</div>
-                            <div className="text-xs font-medium text-slate-500">Total Requests</div>
                         </div>
 
-                        {/* Stat Card 2 */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="p-2 bg-red-50 rounded-lg">
-                                    <ShieldAlert className="w-5 h-5 text-red-500" />
+                        <div className="space-y-8">
+                            <div>
+                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-6">Security Operations</h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <Link href={`/attacks?token=${app.token}`} className="group p-6 bg-slate-50 rounded-2xl border border-slate-100 hover:border-teal-200 transition-all hover:shadow-xl hover:shadow-teal-500/5">
+                                        <ShieldAlert className="w-6 h-6 text-red-500 mb-4 group-hover:scale-110 transition-transform" />
+                                        <div className="text-xs font-black text-slate-800 uppercase tracking-widest">Threat Logs</div>
+                                        <div className="text-[10px] font-bold text-slate-400 mt-1">Real-time alerts</div>
+                                    </Link>
+                                    <Link href={`/statistics?token=${app.token}`} className="group p-6 bg-slate-50 rounded-2xl border border-slate-100 hover:border-teal-200 transition-all hover:shadow-xl hover:shadow-teal-500/5">
+                                        <Activity className="w-6 h-6 text-teal-500 mb-4 group-hover:scale-110 transition-transform" />
+                                        <div className="text-xs font-black text-slate-800 uppercase tracking-widest">Analytics</div>
+                                        <div className="text-[10px] font-bold text-slate-400 mt-1">Traffic patterns</div>
+                                    </Link>
                                 </div>
-                                <span className="text-xs font-bold text-slate-400 uppercase">24H</span>
                             </div>
-                            <div className="text-3xl font-black text-slate-900 mb-1">0</div>
-                            <div className="text-xs font-medium text-slate-500">Threats Blocked</div>
-                        </div>
-
-                        {/* Stat Card 3 */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
-                            <div className="flex items-start justify-between mb-4">
-                                <div className="p-2 bg-teal-50 rounded-lg">
-                                    <Shield className="w-5 h-5 text-teal-500" />
-                                </div>
-                                <span className="text-xs font-bold text-slate-400 uppercase">Current</span>
-                            </div>
-                            <div className="text-lg font-bold text-teal-600 mb-1">Protected</div>
-                            <div className="text-xs font-medium text-slate-500">System Status</div>
-                        </div>
-
-                        {/* Big Chart Area Placeholder */}
-                        <div className="col-span-1 md:col-span-3 bg-white p-6 rounded-xl border border-slate-100 shadow-sm min-h-[300px] flex items-center justify-center text-slate-400 font-medium">
-                            Traffic Analysis Chart Coming Soon
                         </div>
                     </div>
                 )}
 
-                {/* LOGS TAB */}
-                {activeTab === 'LOGS' && (
-                    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                            <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">Recent Requests</h3>
-                            <button className="text-xs font-bold text-teal-600 hover:underline">View All</button>
+                {activeTab === 'AI_POLICY' && (
+                    <div className="max-w-4xl space-y-8">
+                        <div>
+                            <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Behavioral Rules</h3>
+                            <p className="text-sm text-slate-500">Fine-tune the security AI context for this specific application.</p>
                         </div>
-                        <div className="p-8 text-center text-slate-400 italic text-sm">
-                            <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            No recent logs found for this application token.
-                        </div>
-                    </div>
-                )}
-
-                {/* SETTINGS TAB */}
-                {activeTab === 'SETTINGS' && (
-                    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-100">
-                        <div className="p-6">
-                            <h3 className="text-base font-bold text-slate-900 mb-1">General Settings</h3>
-                            <p className="text-sm text-slate-500 mb-4">Manage basic application details.</p>
-
-                            <div className="grid gap-4 max-w-lg">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">Application Name</label>
-                                    <input
-                                        type="text"
-                                        value={app.name}
-                                        readOnly
-                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 focus:outline-none"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-6 bg-red-50/30">
-                            <h3 className="text-base font-bold text-red-600 mb-1">Danger Zone</h3>
-                            <p className="text-sm text-slate-500 mb-4">Irreversible actions for this application.</p>
-
+                        <textarea
+                            className="w-full h-80 p-6 text-sm font-mono border border-slate-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-teal-500/10 bg-slate-50 leading-relaxed shadow-inner"
+                            placeholder="Example: Strictly block any SQL injection patterns. If a request is from user ID 100, allow all..."
+                            value={systemPrompt}
+                            onChange={(e) => setSystemPrompt(e.target.value)}
+                        />
+                        <div className="flex justify-end">
                             <button
-                                onClick={handleDelete}
-                                className="px-4 py-2 bg-white border border-red-200 text-red-600 text-sm font-bold rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors flex items-center gap-2"
+                                onClick={() => { }} // TODO: Implement Policy Save
+                                className="px-10 py-3 bg-teal-500 text-white font-black text-xs tracking-[0.2em] uppercase rounded-xl hover:bg-teal-600 transition-all shadow-lg shadow-teal-500/20"
                             >
-                                <Trash2 className="w-4 h-4" />
-                                Delete Application
+                                Update Security Context
                             </button>
                         </div>
                     </div>
@@ -279,7 +232,7 @@ export default function ApplicationDetailPage() {
             <DefenseModeModal
                 isOpen={isDefenseModalOpen}
                 onClose={() => setIsDefenseModalOpen(false)}
-                currentMode={app.defenseMode || 'Defense'}
+                currentMode={app.defenseMode}
                 onSave={handleDefenseModeSave}
             />
         </div>

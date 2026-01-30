@@ -1,4 +1,4 @@
-import { Globe, Shield, MoreHorizontal, Zap, Anchor, ShieldAlert, X } from "lucide-react";
+import { Globe, Shield, MoreHorizontal, Zap, Anchor, ShieldAlert, X, Lock as LockIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { DefenseModeModal } from "./DefenseModeModal";
@@ -8,11 +8,8 @@ interface ApplicationCardProps {
     app: {
         id: string | number;
         name: string;
-        domain: string;
-        port: string;
         token?: string;
-        defenseStatus: boolean;
-        defenseMode?: "Defense" | "Audited" | "Offline";
+        defenseMode: "DEFENSE" | "AUDITED" | "OFFLINE";
         rqs: number;
         blk: number;
         tags: string[];
@@ -26,9 +23,8 @@ interface ApplicationCardProps {
 export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps) {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
-    const [showToken, setShowToken] = useState(false);
 
-    const handleDefenseModeSave = async (mode: "Defense" | "Audited" | "Offline") => {
+    const handleDefenseModeSave = async (mode: "DEFENSE" | "AUDITED" | "OFFLINE") => {
         try {
             const res = await fetch('/api/applications', {
                 method: 'PUT',
@@ -44,13 +40,6 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
         }
     };
 
-    const copyToken = () => {
-        if (app.token) {
-            navigator.clipboard.writeText(app.token);
-            alert("Token copied to clipboard!");
-        }
-    };
-
     return (
         <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all flex gap-6 relative group">
             {/* ... rest of component ... */}
@@ -63,13 +52,13 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
                     <button
                         onClick={() => setIsDefenseModalOpen(true)}
                         className={cn(
-                            "px-3 py-1 border rounded font-bold text-[10px] tracking-widest uppercase cursor-pointer transition-colors w-full text-center",
-                            (!app.defenseMode || app.defenseMode === 'Defense') ? "border-teal-500 text-teal-500 hover:bg-teal-50" :
-                                app.defenseMode === 'Audited' ? "border-amber-500 text-amber-500 hover:bg-amber-50" :
-                                    "border-red-500 text-red-500 hover:bg-red-50"
+                            "px-3 py-1 border rounded font-black text-[10px] tracking-widest uppercase cursor-pointer transition-colors w-full text-center shadow-sm",
+                            app.defenseMode === 'DEFENSE' ? "bg-teal-500 border-teal-500 text-white hover:bg-teal-600" :
+                                app.defenseMode === 'AUDITED' ? "bg-amber-500 border-amber-500 text-white hover:bg-amber-600" :
+                                    "bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200"
                         )}
                     >
-                        {app.defenseMode || 'DEFENSE'}
+                        {app.defenseMode}
                     </button>
                 </div>
 
@@ -130,16 +119,18 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                        <Zap className="w-3.5 h-3.5 text-slate-300 fill-slate-300" />
-                        <span className="text-slate-400 text-[11px] uppercase font-bold tracking-wide w-12">Token:</span>
-                        <span className="text-slate-700 font-mono">
-                            {app.token ? `${app.token.substring(0, 10)}...` : "Generating..."}
-                        </span>
+                    <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+                            <LockIcon className="w-3.5 h-3.5 text-slate-300" />
+                            <span className="text-[10px] uppercase tracking-wider">SEC TOKEN:</span>
+                        </div>
+                        <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg">
+                            <code className="text-[11px] font-mono font-bold text-slate-600 truncate block">
+                                {app.token || 'MISSING_TOKEN'}
+                            </code>
+                        </div>
                     </div>
-
                 </div>
-
 
                 {/* Footer Tags */}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-2 pt-4">
@@ -163,9 +154,9 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
             <DefenseModeModal
                 isOpen={isDefenseModalOpen}
                 onClose={() => setIsDefenseModalOpen(false)}
-                currentMode={(app.raw?.defenseMode as any) || (app.defenseStatus ? "Defense" : "Audited")}
+                currentMode={app.defenseMode}
                 onSave={handleDefenseModeSave}
             />
-        </div >
+        </div>
     );
 }
