@@ -24,19 +24,22 @@ export async function POST(request: Request) {
         logger.info('Creating new application', { body });
 
         // Basic validation
-        if (!body.name || !body.domain || !body.ports || body.ports.length === 0) {
-            return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 });
+        if (!body.name) {
+            return NextResponse.json({ success: false, error: 'Application Name is required' }, { status: 400 });
         }
 
+        const token = body.token || `maf_sk_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+
         const app = await Application.create({
-            ...body,
+            name: body.name,
+            token,
             defenseMode: body.defenseMode || 'Defense',
-            defenseStatus: true,
-            loggingEnabled: body.loggingEnabled !== undefined ? body.loggingEnabled : true
+            loggingEnabled: body.loggingEnabled !== undefined ? body.loggingEnabled : true,
+            aiModel: body.aiModel || 'mistral'
         });
 
-        logger.info('Application created successfully', { id: app._id });
-        await redis.publish('maf-config-reload', 'created'); // Notify Engine
+        logger.info('Application created successfully', { id: app._id, token });
+        // await redis.publish('maf-config-reload', 'created'); // Engine is now pull-based or event-based, but keep publish for legacy or dashboard updates if needed
 
         return NextResponse.json({ success: true, data: app }, { status: 201 });
     } catch (error) {

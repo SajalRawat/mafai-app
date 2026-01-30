@@ -72,13 +72,7 @@ services:
     networks:
       - maf-network
     restart: always
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [ gpu ]
+
 
   maf-model-puller:
     image: curlimages/curl:latest

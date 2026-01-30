@@ -10,6 +10,7 @@ interface ApplicationCardProps {
         name: string;
         domain: string;
         port: string;
+        token?: string;
         defenseStatus: boolean;
         defenseMode?: "Defense" | "Audited" | "Offline";
         rqs: number;
@@ -25,6 +26,7 @@ interface ApplicationCardProps {
 export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps) {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
+    const [showToken, setShowToken] = useState(false);
 
     const handleDefenseModeSave = async (mode: "Defense" | "Audited" | "Offline") => {
         try {
@@ -39,6 +41,13 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
         } catch (e) {
             console.error(e);
             alert("Failed to update defense mode");
+        }
+    };
+
+    const copyToken = () => {
+        if (app.token) {
+            navigator.clipboard.writeText(app.token);
+            alert("Token copied to clipboard!");
         }
     };
 
@@ -121,19 +130,16 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
                         </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                            <Globe className="w-3.5 h-3.5 text-slate-300" />
-                            <span className="text-slate-400 text-[11px] uppercase font-bold tracking-wide w-12">Domain:</span>
-                            <span className="text-slate-700">{app.domain}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                            <Zap className="w-3.5 h-3.5 text-slate-300 fill-slate-300" />
-                            <span className="text-slate-400 text-[11px] uppercase font-bold tracking-wide w-12">Port:</span>
-                            <span className="text-green-500 font-bold font-mono">{app.port}</span>
-                        </div>
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                        <Zap className="w-3.5 h-3.5 text-slate-300 fill-slate-300" />
+                        <span className="text-slate-400 text-[11px] uppercase font-bold tracking-wide w-12">Token:</span>
+                        <span className="text-slate-700 font-mono">
+                            {app.token ? `${app.token.substring(0, 10)}...` : "Generating..."}
+                        </span>
                     </div>
+
                 </div>
+
 
                 {/* Footer Tags */}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-2 pt-4">
@@ -160,6 +166,6 @@ export function ApplicationCard({ app, onEdit, onDelete }: ApplicationCardProps)
                 currentMode={(app.raw?.defenseMode as any) || (app.defenseStatus ? "Defense" : "Audited")}
                 onSave={handleDefenseModeSave}
             />
-        </div>
+        </div >
     );
 }

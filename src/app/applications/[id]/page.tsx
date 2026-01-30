@@ -2,36 +2,33 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Globe, Shield, ArrowLeft, RefreshCcw, MoreHorizontal, Settings, FileText, Activity, Lock, Users, Zap, Terminal, ShieldAlert } from "lucide-react";
+import { Shield, ShieldAlert, Activity, FileText, Settings, Trash2, Copy, Check } from "lucide-react";
 import { DefenseModeModal } from "@/components/applications/DefenseModeModal";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface Application {
     _id: string;
     name: string;
-    domain: string;
-    ports: { protocol: string; port: string }[];
-    upstreams: string[];
-    type: string;
     defenseMode?: "Defense" | "Audited" | "Offline";
     defenseStatus: boolean;
     loggingEnabled: boolean;
     aiModel?: string;
     aiSystemPrompt?: string;
     policyHistory?: any[];
+    token?: string;
 }
 
 export default function ApplicationDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const [app, setApp] = useState<Application | null>(null);
     const [loading, setLoading] = useState(true);
     const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
 
-    // New State for Policy Feature
-    const [activeTab, setActiveTab] = useState<'BASIC' | 'RULES' | 'ADVANCED' | 'ROUTINGS' | 'AI_POLICY'>('BASIC');
-    const [systemPrompt, setSystemPrompt] = useState("");
-    const [isSavingPolicy, setIsSavingPolicy] = useState(false);
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'LOGS' | 'SETTINGS'>('DASHBOARD');
+    const [tokenCopied, setTokenCopied] = useState(false);
 
     useEffect(() => {
         if (params.id) {
@@ -41,25 +38,20 @@ export default function ApplicationDetailPage() {
 
     const fetchApp = async (id: string) => {
         try {
-            const res = await fetch(`/api/applications?id=${id}`); // Assuming API supports get by ID or filter
-            // Note: Current API returns ALL apps on GET /. We might need to filter client side if API doesn't support ID param yet
-            // Let's assume for now we might need to fetch all and find, or update API. 
-            // Checking existing API... usually GET /api/applications returns list.
-            // Let's generic fetch all and find for now to be safe without changing API yet.
+            const res = await fetch(`/api/applications?id=${id}`);
             const data = await res.json();
             if (data.data) {
-                const found = data.data.find((a: any) => a._id === id || a.id === id);
-                setApp(found);
+                // If the API returns a list (which strictly it shouldn't if id is passed but current API structure is loose), find it.
+                // If it returns a single object, use it.
+                if (Array.isArray(data.data)) {
+                    const found = data.data.find((a: any) => a._id === id || a.id === id);
+                    setApp(found);
+                } else {
+                    setApp(data.data);
+                }
             } else if (Array.isArray(data)) {
                 const found = data.find((a: any) => a._id === id || a.id === id);
                 setApp(found);
-
-                // Set initial system prompt if exists
-                if (found.aiSystemPrompt) {
-                    setSystemPrompt(found.aiSystemPrompt);
-                } else {
-                    setSystemPrompt("");
-                }
             }
         } catch (e) {
             console.error("Failed to fetch app", e);
@@ -77,44 +69,41 @@ export default function ApplicationDetailPage() {
                 body: JSON.stringify({ id: app._id, defenseMode: mode })
             });
             if (res.ok) {
-                fetchApp(app._id); // Refresh local data
+                fetchApp(app._id);
+                setIsDefenseModalOpen(false);
             }
         } catch (e) {
-            alert("Failed to update");
+            alert("Failed to update defense mode");
         }
     };
 
-    const handlePolicySave = async () => {
-        if (!app) return;
-        if (!systemPrompt.trim()) return alert("Please enter a system prompt");
-
-        setIsSavingPolicy(true);
+    const handleDelete = async () => {
+        if (!app || !confirm("Are you sure you want to delete this application? This action cannot be undone.")) return;
         try {
-            const res = await fetch(`/api/applications/${app._id}/policy`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ systemPrompt })
+            const res = await fetch(`/api/applications?id=${app._id}`, {
+                method: 'DELETE',
             });
-
             if (res.ok) {
-                alert("Policy saved and model created successfully!");
-                fetchApp(app._id); // Refresh to see new model and history
+                router.push('/applications');
             } else {
-                const err = await res.json();
-                alert("Failed to save policy: " + (err.error || "Unknown error"));
+                alert("Failed to delete application");
             }
         } catch (e) {
             console.error(e);
-            alert("Failed to save policy");
-        } finally {
-            setIsSavingPolicy(false);
+            alert("Error deleting application");
         }
     };
 
-    if (loading) return <div className="p-10 text-center">Loading...</div>;
-    if (!app) return <div className="p-10 text-center">Application not found</div>;
+    const copyToken = () => {
+        if (app?.token) {
+            navigator.clipboard.writeText(app.token);
+            setTokenCopied(true);
+            setTimeout(() => setTokenCopied(false), 2000);
+        }
+    };
 
-    const Icon = app.type === 'Reverse Proxy' ? Globe : Shield;
+    if (loading) return <div className="p-10 text-center text-slate-500">Loading Application...</div>;
+    if (!app) return <div className="p-10 text-center text-red-500">Application not found</div>;
 
     return (
         <div className="p-6 max-w-[1600px] mx-auto min-h-screen space-y-6">
@@ -126,267 +115,166 @@ export default function ApplicationDetailPage() {
             </div>
 
             {/* Header Card */}
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full bg-teal-50 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-teal-500" />
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h1 className="text-xl font-bold text-slate-900">{app.name}</h1>
-                            <button className="text-slate-400 hover:text-teal-500 transition-colors">
-                                <span className="sr-only">Edit</span>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
-                            </button>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+                    <div className="flex items-center gap-5">
+                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white shadow-lg flex-shrink-0">
+                            <Shield className="w-8 h-8" />
                         </div>
-                        <div className="text-slate-500 text-sm font-medium">{app.domain}</div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-900">{app.name}</h1>
+                            <div className="flex items-center gap-3 mt-2">
+                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">TOKEN</span>
+                                <div className="flex items-center bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-200 group hover:border-teal-200 transition-colors">
+                                    <code className="text-sm font-mono text-slate-600">{app.token || 'Generating...'}</code>
+                                    <button
+                                        onClick={copyToken}
+                                        className="ml-3 text-slate-400 hover:text-teal-600 transition-colors"
+                                        title="Copy Token"
+                                    >
+                                        {tokenCopied ? <Check className="w-4 h-4 text-teal-600" /> : <Copy className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-
-                <div className="flex items-center gap-12">
-                    <div className="flex flex-col items-center gap-1">
+                    <div className="flex items-center gap-4">
                         <button
                             onClick={() => setIsDefenseModalOpen(true)}
                             className={cn(
-                                "px-4 py-1.5 border rounded font-bold text-xs tracking-widest uppercase cursor-pointer transition-colors flex items-center gap-2",
-                                (!app.defenseMode || app.defenseMode === 'Defense') ? "border-teal-500 text-teal-500 hover:bg-teal-50" :
-                                    app.defenseMode === 'Audited' ? "border-amber-500 text-amber-500 hover:bg-amber-50" :
-                                        "border-red-500 text-red-500 hover:bg-red-50"
-                            )}
-                        >
-                            {app.defenseMode || 'DEFENSE'} MODE
-                            <Settings className="w-3 h-3" />
+                                "px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wide border transition-all shadow-sm hover:shadow",
+                                app.defenseMode === 'Audited' ? "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100" :
+                                    app.defenseMode === 'Offline' ? "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200" :
+                                        "bg-teal-50 text-teal-600 border-teal-200 hover:bg-teal-100"
+                            )}>
+                            <div className="flex items-center gap-2">
+                                <div className={cn("w-2 h-2 rounded-full animate-pulse",
+                                    app.defenseMode === 'Audited' ? "bg-amber-500" :
+                                        app.defenseMode === 'Offline' ? "bg-slate-400" : "bg-teal-500"
+                                )} />
+                                {app.defenseMode || 'DEFENSE'} MODE
+                            </div>
                         </button>
-                        <span className="text-[10px] font-medium text-teal-500">
-                            {(!app.defenseMode || app.defenseMode === 'Defense') ? "Attacks will be blocked" :
-                                app.defenseMode === 'Audited' ? "Log only strategy" : "All Blocking strategy"}
-                        </span>
-                    </div>
-
-                    <div className="flex gap-8">
-                        <div className="text-right">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">RQS TD</div>
-                            <div className="text-sm font-black text-slate-900">18</div>
-                        </div>
-                        <div className="text-right">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">BLK TD</div>
-                            <div className="text-sm font-black text-slate-900">18</div>
-                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Tabs */}
+            {/* Tabs Navigation */}
             <div className="flex gap-1 border-b border-slate-200">
-                <button
-                    onClick={() => setActiveTab('BASIC')}
-                    className={cn(
-                        "px-6 py-3 text-sm font-bold transition-colors uppercase border-t border-x rounded-t-lg mb-[-1px]",
-                        activeTab === 'BASIC' ? "bg-white border-slate-200 border-b-white text-teal-500" : "bg-slate-50 border-transparent text-slate-500 hover:text-teal-500"
-                    )}
-                >
-                    BASIC
-                </button>
-                <button
-                    onClick={() => setActiveTab('RULES')}
-                    className={cn(
-                        "px-6 py-3 text-sm font-bold transition-colors uppercase border-t border-x rounded-t-lg mb-[-1px]",
-                        activeTab === 'RULES' ? "bg-white border-slate-200 border-b-white text-teal-500" : "bg-slate-50 border-transparent text-slate-500 hover:text-teal-500"
-                    )}
-                >
-                    FORWARDING RULES
-                </button>
-                <button
-                    onClick={() => setActiveTab('ADVANCED')}
-                    className={cn(
-                        "px-6 py-3 text-sm font-bold transition-colors uppercase border-t border-x rounded-t-lg mb-[-1px] flex items-center gap-1",
-                        activeTab === 'ADVANCED' ? "bg-white border-slate-200 border-b-white text-teal-500" : "bg-slate-50 border-transparent text-slate-500 hover:text-teal-500"
-                    )}
-                >
-                    ADVANCED <Shield className="w-3 h-3" />
-                </button>
-                <button
-                    onClick={() => setActiveTab('ROUTINGS')}
-                    className={cn(
-                        "px-6 py-3 text-sm font-bold transition-colors uppercase border-t border-x rounded-t-lg mb-[-1px]",
-                        activeTab === 'ROUTINGS' ? "bg-white border-slate-200 border-b-white text-teal-500" : "bg-slate-50 border-transparent text-slate-500 hover:text-teal-500"
-                    )}
-                >
-                    ROUTINGS
-                </button>
-                <button
-                    onClick={() => setActiveTab('AI_POLICY')}
-                    className={cn(
-                        "px-6 py-3 text-sm font-bold transition-colors uppercase border-t border-x rounded-t-lg mb-[-1px] flex items-center gap-1 group",
-                        activeTab === 'AI_POLICY' ? "bg-white border-slate-200 border-b-white text-teal-500" : "bg-slate-50 border-transparent text-slate-500 hover:text-teal-500"
-                    )}
-                >
-                    AI POLICY <Terminal className="w-3 h-3 group-hover:text-teal-500 transition-colors" />
-                </button>
+                {['DASHBOARD', 'LOGS', 'SETTINGS'].map((tab) => (
+                    <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab as any)}
+                        className={cn(
+                            "px-6 py-3 text-sm font-bold transition-all uppercase border-t border-x rounded-t-lg mb-[-1px] relative",
+                            activeTab === tab
+                                ? "bg-white border-slate-200 border-b-white text-teal-600"
+                                : "bg-slate-50 border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                        )}
+                    >
+                        {tab}
+                    </button>
+                ))}
             </div>
 
-            {/* Basic Content */}
-            {activeTab === 'BASIC' && (
-                <div className="bg-white p-8 rounded-b-xl rounded-tr-xl border border-t-0 border-slate-100 shadow-sm space-y-10">
-                    {/* ... Existing Basic Content ... */}
-                    {/* Basic Info Section */}
-                    <div className="space-y-6">
-                        <div className="flex items-center gap-2">
-                            <h2 className="text-base font-bold text-slate-900">Basic</h2>
-                            <button className="text-slate-400 hover:text-teal-500 transition-colors">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
-                            </button>
+            {/* Tab Content */}
+            <div className="space-y-6">
+
+                {/* DASHBOARD TAB */}
+                {activeTab === 'DASHBOARD' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Stat Card 1 */}
+                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="p-2 bg-blue-50 rounded-lg">
+                                    <Activity className="w-5 h-5 text-blue-500" />
+                                </div>
+                                <span className="text-xs font-bold text-slate-400 uppercase">24H</span>
+                            </div>
+                            <div className="text-3xl font-black text-slate-900 mb-1">0</div>
+                            <div className="text-xs font-medium text-slate-500">Total Requests</div>
                         </div>
 
-                        <div className="grid grid-cols-[200px_1fr] gap-y-6 text-sm">
-                            <div className="text-slate-400 font-medium">Application</div>
-                            <div className="text-slate-500">{app.domain}</div>
-
-                            <div className="text-slate-400 font-medium">Port</div>
-                            <div className="flex gap-2">
-                                {(app.ports || []).map((p, i) => (
-                                    <span key={i} className="px-2 py-0.5 bg-cyan-50 text-cyan-600 rounded text-xs font-bold font-mono">
-                                        {p.port}/{p.protocol}
-                                    </span>
-                                ))}
+                        {/* Stat Card 2 */}
+                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="p-2 bg-red-50 rounded-lg">
+                                    <ShieldAlert className="w-5 h-5 text-red-500" />
+                                </div>
+                                <span className="text-xs font-bold text-slate-400 uppercase">24H</span>
                             </div>
-
-                            <div className="text-slate-400 font-medium">Access method</div>
-                            <div>
-                                <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded text-xs font-bold border border-slate-200">
-                                    {app.type}
-                                </span>
-                            </div>
-
-                            <div className="text-slate-400 font-medium">Upstream</div>
-                            <div className="font-mono text-slate-600 bg-slate-50 px-3 py-1 rounded w-fit border border-slate-200">
-                                {app.upstreams?.[0] || app.domain}
-                            </div>
-
-                            <div className="text-slate-400 font-medium">AI Model</div>
-                            <div className="font-mono text-slate-600 bg-purple-50 px-3 py-1 rounded w-fit border border-purple-200 text-purple-700">
-                                {app.aiModel || 'mistral'}
-                            </div>
+                            <div className="text-3xl font-black text-slate-900 mb-1">0</div>
+                            <div className="text-xs font-medium text-slate-500">Threats Blocked</div>
                         </div>
-                    </div>
 
-                    {/* Security Section */}
-                    <div className="space-y-6">
-                        <h2 className="text-base font-bold text-slate-900">Security</h2>
-                        <div className="flex flex-wrap gap-4">
-                            <button className="flex items-center gap-3 px-4 py-2 bg-cyan-50 border border-cyan-200 rounded text-cyan-600 text-xs font-bold uppercase hover:bg-cyan-100 transition-colors min-w-[140px]">
-                                <ShieldAlert className="w-3.5 h-3.5" /> ATTACKS
-                            </button>
+                        {/* Stat Card 3 */}
+                        <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm">
+                            <div className="flex items-start justify-between mb-4">
+                                <div className="p-2 bg-teal-50 rounded-lg">
+                                    <Shield className="w-5 h-5 text-teal-500" />
+                                </div>
+                                <span className="text-xs font-bold text-slate-400 uppercase">Current</span>
+                            </div>
+                            <div className="text-lg font-bold text-teal-600 mb-1">Protected</div>
+                            <div className="text-xs font-medium text-slate-500">System Status</div>
+                        </div>
+
+                        {/* Big Chart Area Placeholder */}
+                        <div className="col-span-1 md:col-span-3 bg-white p-6 rounded-xl border border-slate-100 shadow-sm min-h-[300px] flex items-center justify-center text-slate-400 font-medium">
+                            Traffic Analysis Chart Coming Soon
                         </div>
                     </div>
+                )}
 
-                    {/* Data Statistics */}
-                    <div className="space-y-6">
-                        <h2 className="text-base font-bold text-slate-900">Data Statistics</h2>
-                        <div className="flex flex-wrap gap-4">
-                            <Link href="/statistics" className="flex items-center gap-3 px-4 py-2 bg-slate-50 border border-slate-200 rounded text-slate-700 text-xs font-bold uppercase hover:bg-slate-100 transition-colors">
-                                TRAFFIC ANALYSIS <Activity className="w-3.5 h-3.5 text-teal-500" />
-                            </Link>
-                            <button className="flex items-center gap-3 px-4 py-2 bg-slate-50 border border-slate-200 rounded text-slate-700 text-xs font-bold uppercase hover:bg-slate-100 transition-colors">
-                                SECURITY POSTURE <Shield className="w-3.5 h-3.5 text-teal-500" />
-                            </button>
+                {/* LOGS TAB */}
+                {activeTab === 'LOGS' && (
+                    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                            <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">Recent Requests</h3>
+                            <button className="text-xs font-bold text-teal-600 hover:underline">View All</button>
+                        </div>
+                        <div className="p-8 text-center text-slate-400 italic text-sm">
+                            <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                            No recent logs found for this application token.
                         </div>
                     </div>
+                )}
 
-                    {/* Logs */}
-                    <div className="space-y-6">
-                        <h2 className="text-base font-bold text-slate-900">Logs</h2>
-                        <div className="flex flex-wrap gap-4">
-                            <Link href="/allow-deny" className="flex items-center gap-3 px-4 py-2 bg-slate-50 border border-slate-200 rounded text-slate-700 text-xs font-bold uppercase hover:bg-slate-100 transition-colors">
-                                <FileText className="w-3.5 h-3.5" /> ACCESS LOG
-                            </Link>
-                            <Link href="/attacks" className="flex items-center gap-3 px-4 py-2 bg-slate-50 border border-slate-200 rounded text-slate-700 text-xs font-bold uppercase hover:bg-slate-100 transition-colors">
-                                <FileText className="w-3.5 h-3.5" /> ERROR LOG
-                            </Link>
-                        </div>
-                    </div>
-                </div>
-            )}
+                {/* SETTINGS TAB */}
+                {activeTab === 'SETTINGS' && (
+                    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-100">
+                        <div className="p-6">
+                            <h3 className="text-base font-bold text-slate-900 mb-1">General Settings</h3>
+                            <p className="text-sm text-slate-500 mb-4">Manage basic application details.</p>
 
-            {/* AI Policy Content */}
-            {activeTab === 'AI_POLICY' && (
-                <div className="bg-white p-8 rounded-b-xl rounded-tr-xl border border-t-0 border-slate-100 shadow-sm space-y-10">
-                    <div className="space-y-6">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h2 className="text-lg font-bold text-slate-900">Custom AI WAF Policy</h2>
-                                <p className="text-sm text-slate-500 mt-1">Define specific instructions for the AI to analyze traffic for this application.</p>
-                            </div>
-                            <div className="text-right">
-                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">CURRENT MODEL</div>
-                                <div className="text-sm font-mono font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded inline-block">
-                                    {app.aiModel || 'mistral'}
+                            <div className="grid gap-4 max-w-lg">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">Application Name</label>
+                                    <input
+                                        type="text"
+                                        value={app.name}
+                                        readOnly
+                                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 focus:outline-none"
+                                    />
                                 </div>
                             </div>
                         </div>
 
-                        <div className="space-y-4">
-                            <label className="block text-sm font-bold text-slate-700 uppercase tracking-wide">
-                                System Prompt
-                            </label>
-                            <textarea
-                                className="w-full h-64 p-4 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 bg-slate-50"
-                                placeholder="You are a WAF optimized for e-commerce. Block any attempts to manipulate prices..."
-                                value={systemPrompt}
-                                onChange={(e) => setSystemPrompt(e.target.value)}
-                            />
-                            <div className="flex justify-end">
-                                <button
-                                    onClick={handlePolicySave}
-                                    disabled={isSavingPolicy}
-                                    className="px-6 py-2.5 bg-teal-500 text-white font-bold text-sm rounded-lg hover:bg-teal-600 transition-colors disabled:opacity-50 flex items-center gap-2"
-                                >
-                                    {isSavingPolicy ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                                    SAVE & BUILD MODEL
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                        <div className="p-6 bg-red-50/30">
+                            <h3 className="text-base font-bold text-red-600 mb-1">Danger Zone</h3>
+                            <p className="text-sm text-slate-500 mb-4">Irreversible actions for this application.</p>
 
-                    {/* Policy History */}
-                    <div className="space-y-6 pt-6 border-t border-slate-100">
-                        <h3 className="text-base font-bold text-slate-900">Policy History</h3>
-                        <div className="overflow-hidden rounded-lg border border-slate-200">
-                            <table className="w-full text-sm text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px]">
-                                    <tr>
-                                        <th className="px-4 py-3">Date</th>
-                                        <th className="px-4 py-3">Model Name</th>
-                                        <th className="px-4 py-3">Prompt Summary</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {(app.policyHistory || []).map((policy: any, i: number) => (
-                                        <tr key={i} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
-                                                {new Date(policy.createdAt).toLocaleString()}
-                                            </td>
-                                            <td className="px-4 py-3 font-mono text-purple-600">
-                                                {policy.modelName}
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-600 truncate max-w-[300px]">
-                                                {policy.prompt}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {(!app.policyHistory || app.policyHistory.length === 0) && (
-                                        <tr>
-                                            <td colSpan={3} className="px-4 py-8 text-center text-slate-400 italic">
-                                                No custom policies created yet. Using default 'mistral'.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
+                            <button
+                                onClick={handleDelete}
+                                className="px-4 py-2 bg-white border border-red-200 text-red-600 text-sm font-bold rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors flex items-center gap-2"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                                Delete Application
+                            </button>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
 
             <DefenseModeModal
                 isOpen={isDefenseModalOpen}

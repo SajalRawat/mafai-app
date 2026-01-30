@@ -2,14 +2,9 @@ import mongoose from 'mongoose';
 
 export interface IApplication extends mongoose.Document {
     name: string;
-    domain: string;
-    ports: { protocol: string; port: string }[];
-    upstreams: string[];
-    redirectStatus?: number;
-    redirectUrl?: string;
-    type: 'Reverse Proxy' | 'Static Files' | 'Redirect';
+    token?: string;
     defenseMode?: 'Defense' | 'Audited' | 'Offline';
-    defenseStatus: boolean;
+    defenseStatus: boolean; // Keeping for backward compat if needed, or remove? Plan said keep minimal. Let's keep distinct mode.
     loggingEnabled: boolean;
     aiModel?: string;
     aiSystemPrompt?: string;
@@ -19,21 +14,14 @@ export interface IApplication extends mongoose.Document {
         createdAt: Date;
     }[];
     createdAt: Date;
+    updatedAt: Date;
 }
 
 const ApplicationSchema = new mongoose.Schema<IApplication>({
     name: { type: String, required: true },
-    domain: { type: String, required: true },
-    ports: [{
-        protocol: { type: String, required: true },
-        port: { type: String, required: true }
-    }],
-    upstreams: [{ type: String }],
-    redirectStatus: { type: Number },
-    redirectUrl: { type: String },
-    type: { type: String, required: true, enum: ['Reverse Proxy', 'Static Files', 'Redirect'] },
+    token: { type: String, unique: true, index: true }, // Index for fast lookup
     defenseMode: { type: String, enum: ['Defense', 'Audited', 'Offline'], default: 'Defense' },
-    defenseStatus: { type: Boolean, default: true }, // Deprecated
+    defenseStatus: { type: Boolean, default: true },
     loggingEnabled: { type: Boolean, default: true },
     aiModel: { type: String, default: 'mistral' },
     aiSystemPrompt: { type: String },
@@ -43,6 +31,13 @@ const ApplicationSchema = new mongoose.Schema<IApplication>({
         createdAt: { type: Date, default: Date.now }
     }],
     createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+// Update timestamp on save
+ApplicationSchema.pre('save', function (this: IApplication, next: any) {
+    this.updatedAt = new Date();
+    next();
 });
 
 export default mongoose.models.Application || mongoose.model<IApplication>('Application', ApplicationSchema);

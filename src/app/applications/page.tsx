@@ -118,6 +118,7 @@ export default function ApplicationsPage() {
                                 name: app.name,
                                 domain: app.domain,
                                 port: (app.ports || []).map(p => `${p.port}/${p.protocol}`).join(' '),
+                                token: (app as any).token, // Pass token
                                 defenseStatus: app.defenseStatus,
                                 defenseMode: (app as any).defenseMode, // Map defenseMode
                                 rqs: 0,

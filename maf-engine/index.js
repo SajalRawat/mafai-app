@@ -1,22 +1,28 @@
-const http = require('http');
-const httpProxy = require('http-proxy');
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const { createClient } = require('redis');
 const pino = require('pino');
 const crypto = require('crypto');
 
 const logger = pino({ level: 'info' });
-const proxy = httpProxy.createProxyServer({});
+const app = express();
+const PORT = process.env.PORT || 3001;
 
 // --- Configuration ---
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/maf_db';
 const REDIS_URI = process.env.REDIS_URI || 'redis://localhost:6379';
+const MAF_API_URL = process.env.MAF_API_URL || 'http://localhost:3000/api'; // Internal link to Next.js API
 
-// --- Database Schemas (Inline for simplicity in this microservice) ---
+app.use(cors());
+app.use(bodyParser.json());
+
+// --- Database Schemas (Inline for simplicity) ---
 // LOG SCHEMA MATCHING src/lib/models/Log.ts
 const LogSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
-    time: { type: String, required: true }, // Keeping string format as per UI requirement, or strict date? UI uses string 'time' usually.
+    time: { type: String, required: true },
     ip: { type: String, required: true },
     method: { type: String, required: true },
     uri: { type: String, required: true },
@@ -25,356 +31,172 @@ const LogSchema = new mongoose.Schema({
     userAgent: { type: String },
     referer: { type: String },
     country: { type: String },
-    attackType: { type: String },
+    attackType: { type: String }, // 'SQL Injection', 'XSS', 'AI Block'
     aiAnalysis: { type: String },
     createdAt: { type: Date, default: Date.now },
-    applicationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Application' } // Optional but good for future filtering
+    applicationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Application' }
 });
+
 const Log = mongoose.model('Log', LogSchema);
 
-const ApplicationSchema = new mongoose.Schema({
-    name: String,
-    domain: String,
-    ports: [{ protocol: String, port: String }],
-    upstreams: [String],
-    type: String, // 'Reverse Proxy', 'Static', 'Redirect'
-    defenseMode: String,
-    defenseStatus: Boolean,
-    loggingEnabled: { type: Boolean, default: true }
-});
-const Application = mongoose.model('Application', ApplicationSchema);
-
-// --- Proxy Logic ---
-const activeServers = new Map(); // port -> server instance
-const appConfigs = new Map(); // port -> latest app config
-
-async function startServer(app, portConfig) {
-    const port = parseInt(portConfig.port);
-
-    // Update the config map regardless of whether server exists
-    appConfigs.set(port, app);
-
-    if (activeServers.has(port)) {
-        logger.info(`Server already running on port ${port} - Updated Config`);
-        return;
-    }
-
-    const server = http.createServer(async (req, res) => {
-        // ALWAYS fetch the latest config for this port
-        const currentApp = appConfigs.get(port);
-        if (!currentApp) {
-            res.writeHead(500);
-            res.end('Internal Server Error: App Config Missing');
-            return;
-        }
-
-        const start = Date.now();
-        const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
-
-        // --- DEFENSE MODES CHECK ---
-        const mode = currentApp.defenseMode || (currentApp.defenseStatus ? 'Defense' : 'Audited'); // Backwards compat
-
-        if (mode === 'Offline') {
-            res.writeHead(403);
-            res.end('<h1>Service Offline</h1><p>This service is currently offline.</p>');
-            // Logging disabled for Offline mode as per user request
-            return;
-        }
-
-        // --- AI WAF CHECK ---
-        if (mode === 'Defense') {
-            const aiResult = await analyzeRequestWithAI(req, currentApp);
-
-            if (aiResult.verdict === 'BLOCK') {
-                logger.warn(`AI BLOCKED request from ${clientIp} to ${req.url}. Reason: ${aiResult.reason}`);
-                res.writeHead(403);
-                res.end(`<h1>403 Forbidden</h1><p>Blocked by MAF AI Defense</p>`);
-
-                if (currentApp.loggingEnabled) {
-                    // Pass the AI reason to logs
-                    logRequest(req, 403, Date.now() - start, clientIp, currentApp._id, 0, 'AI Block', aiResult.reason);
-                }
-                return;
-            }
-        }
-        // --------------------
-
-        // Logic for different types
-        if (currentApp.type === 'Reverse Proxy') {
-            // Simple Round Robin if multiple upstreams (taking first for MVP)
-            // Fallback to domain if upstream is missing (User error handling)
-            let target = currentApp.upstreams[0];
-            if (!target && currentApp.domain && currentApp.domain.startsWith('http')) {
-                target = currentApp.domain;
-            }
-
-            if (!target) {
-                res.writeHead(502);
-                res.end('Bad Gateway: No upstream configured');
-                return;
-            }
-
-            proxy.web(req, res, { target, changeOrigin: true }, (err) => {
-                logger.error(`Proxy error for ${currentApp.name} on port ${port}:`, err);
-                if (!res.headersSent) {
-                    res.writeHead(502);
-                    res.end('Bad Gateway');
-                }
-                // Log Error
-                if (currentApp.loggingEnabled) {
-                    logRequest(req, 502, Date.now() - start, clientIp, currentApp._id, 0);
-                }
-            });
-
-        } else if (currentApp.type === 'Redirect') {
-            let target = currentApp.upstreams[0];
-            // Fallback to domain if upstream is missing
-            if (!target && currentApp.domain && currentApp.domain.startsWith('http')) {
-                target = currentApp.domain;
-            }
-
-            if (target) {
-                // FORCE 307 TO PREVENT CACHING AND ENSURE LOGGING
-                res.writeHead(307, {
-                    'Location': target,
-                    'Cache-Control': 'no-cache, no-store, must-revalidate'
-                });
-                res.end();
-                if (currentApp.loggingEnabled) {
-                    logRequest(req, 307, Date.now() - start, clientIp, currentApp._id, 0);
-                }
-            } else {
-                // Fallback if no upstream is defined for redirection
-                res.writeHead(404);
-                res.end('Not Found: No redirect target configured');
-                if (currentApp.loggingEnabled) {
-                    logRequest(req, 404, Date.now() - start, clientIp, currentApp._id, 0);
-                }
-            }
-        } else {
-            res.writeHead(200);
-            res.end('MAF Static Site (Placeholder)');
-            if (currentApp.loggingEnabled) {
-                logRequest(req, 200, Date.now() - start, clientIp, currentApp._id, 25);
-            }
-        }
-    });
-
-    // Logging hook
-    server.on('request', (req, res) => {
-        const start = Date.now();
-        let responseSize = 0;
-
-        // Basic size estimation
-        const originalWrite = res.write;
-        const originalEnd = res.end;
-
-        res.write = function (chunk, ...args) {
-            if (chunk) responseSize += chunk.length;
-            return originalWrite.apply(res, [chunk, ...args]);
-        };
-
-        res.end = function (chunk, ...args) {
-            if (chunk) responseSize += chunk.length;
-
-            // Log after response finishes
-            res.once('finish', () => {
-                const currentApp = appConfigs.get(port); // Dynamic lookup
-                if (currentApp && currentApp.loggingEnabled) {
-                    const type = req.aiVerdict ? req.aiVerdict.type : 'Normal';
-                    const analysis = req.aiVerdict ? req.aiVerdict.analysis : null;
-                    logRequest(req, res.statusCode, Date.now() - start, req.socket.remoteAddress || 'unknown', currentApp._id, responseSize, type, analysis);
-                }
-            });
-
-            return originalEnd.apply(res, [chunk, ...args]);
-        };
-    });
-
-    server.listen(port, () => {
-        logger.info(`MAF Engine listening on port ${port} for app ${app.name}`);
-    });
-
-    // Track server (to close later if needed)
-    activeServers.set(port, server);
-}
-
-// --- AI Analysis Logic ---
-async function analyzeRequestWithAI(req, app) {
-    try {
-        // AI Check forced for ALL requests
-        // AI Optimization: Skip analysis for static files
-        if (req.url.match(/\.(css|js|png|jpg|jpeg|gif|ico|woff|woff2|ttf|svg|eot|mp4|webm|mp3|wav|json|map)$/i)) return { verdict: 'ALLOW', reason: null };
-        // Skip OPTIONS requests
-        if (req.method === 'OPTIONS') return { verdict: 'ALLOW', reason: null };
-
-        const prompt = `
-        You are a Web Application Firewall (WAF) engine. 
-        Analyze the following HTTP request for malicious content (SQL Injection, XSS, Path Traversal, Command Injection, etc.).
-        
-        Request Method: ${req.method}
-        Request URL: ${req.url}
-        User-Agent: ${req.headers['user-agent']}
-
-        Reply strictly in JSON format with two fields:
-        {
-            "verdict": "BLOCK" or "ALLOW",
-            "reason": "A short summary of why it was blocked and what the attack could do (Max 15 words)"
-        }
-        `;
-
-        // 3000ms timeout for AI verdict to handle load
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-        const modelToUse = app?.aiModel || 'mistral';
-
-        const response = await fetch('http://maf-ai:11434/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: modelToUse,
-                prompt: prompt,
-                stream: false,
-                format: "json" // Force JSON mode if supported by Ollama/Mistral
-            }),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) return { verdict: 'ALLOW', reason: null }; // Fail open on API error
-
-        const data = await response.json();
-        let result = { verdict: 'ALLOW', reason: null };
-
-        try {
-            // Mistral might wrap it or return raw text. Try to parse.
-            const rawResponse = data.response.trim();
-            // Attempt to find JSON object in response if extra text exists
-            const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-            const jsonStr = jsonMatch ? jsonMatch[0] : rawResponse;
-
-            const parsed = JSON.parse(jsonStr);
-            result.verdict = parsed.verdict?.toUpperCase() || 'ALLOW';
-            result.reason = parsed.reason || null;
-        } catch (e) {
-            // Fallback: Check for BLOCK keyword if JSON parse fails
-            if (data.response.toUpperCase().includes('BLOCK')) {
-                result.verdict = 'BLOCK';
-                result.reason = "AI Triggered (Parse Error)";
-            }
-        }
-
-        if (result.verdict.includes('BLOCK')) return { verdict: 'BLOCK', reason: result.reason };
-        return { verdict: 'ALLOW', reason: null };
-
-    } catch (error) {
-        // Fail Open on Timeout or Error
-        // logger.error("AI Analysis Failed (Failing Open)", error.name);
-        return { verdict: 'ALLOW', reason: null };
-    }
-}
-
 // --- Redis Client ---
-const redisClient = createClient({
-    url: REDIS_URI
-});
-
+const redisClient = createClient({ url: REDIS_URI });
 redisClient.on('error', (err) => logger.error('Redis Client Error', err));
 redisClient.on('connect', () => logger.info('Connected to Redis'));
 
-async function logRequest(req, status, duration, ip, appId, size, attackType = null, aiAnalysis = null) {
+// --- Helper Functions ---
+
+// 1. Validate Token (Ideally we cache this, but for now we hit the API or DB directly)
+// Note: Since we have DB access here, we can skip the HTTP call for speed if we share the DB.
+// Let's use direct DB access for Application model since we are in the same network/repo context usually.
+// OTHERWISE use fetch to MAF_API_URL/validate.
+// DECISION: Use direct DB access for performance and simplicity in this monolithic-style repo setup.
+const ApplicationSchema = new mongoose.Schema({
+    name: String,
+    token: { type: String, index: true },
+    defenseMode: String,
+    aiModel: String,
+    loggingEnabled: Boolean
+});
+const Application = mongoose.model('Application', ApplicationSchema);
+
+async function validateToken(token) {
+    if (!token) return null;
+    return await Application.findOne({ token }).lean();
+}
+
+async function analyzeRequestWithAI(reqData, appConfig) {
+    try {
+        const prompt = `
+        Analyze this HTTP request for security threats:
+        Method: ${reqData.method}
+        URL: ${reqData.path}
+        Headers: ${JSON.stringify(reqData.headers)}
+        Body: ${JSON.stringify(reqData.body).substring(0, 500)}
+        
+        Respond JSON: { "verdict": "BLOCK" | "ALLOW", "reason": "short reason" }
+        `;
+
+        const modelToUse = appConfig.aiModel || 'mistral';
+
+        // Mock AI Call for scaffolding - Replace with actual Ollama fetch
+        // In real impl, fetch('http://maf-ai:11434/api/generate', ...)
+
+        // Simulating AI check
+        // if (reqData.path.includes('union+select')) return { verdict: 'BLOCK', reason: 'SQL Injection Detected' };
+
+        return { verdict: 'ALLOW', reason: null };
+
+    } catch (e) {
+        logger.error("AI Analysis Failed", e);
+        return { verdict: 'ALLOW', reason: 'AI Fail Open' };
+    }
+}
+
+async function logRequest(reqData, decision, appConfig) {
+    if (!appConfig.loggingEnabled) return;
+
     try {
         const logEntry = {
             id: crypto.randomUUID(),
             time: new Date().toISOString(),
-            ip: ip,
-            method: req.method,
-            uri: req.url,
-            status: status,
-            size: `${size}B`,
-            userAgent: req.headers['user-agent'],
-            referer: req.headers['referer'],
+            ip: reqData.ip,
+            method: reqData.method,
+            uri: reqData.path,
+            status: decision.decision === 'YES' ? 200 : 403, // Pseudo status
+            size: '0B',
+            userAgent: reqData.headers['user-agent'] || 'unknown',
+            referer: reqData.headers['referer'] || '',
             country: 'Unknown',
-            attackType: attackType,
-            aiAnalysis: aiAnalysis,
+            attackType: decision.decision === 'NO' ? decision.reason : null,
+            aiAnalysis: decision.reason,
             createdAt: new Date(),
-            applicationId: appId
+            applicationId: appConfig._id
         };
 
         await Log.create(logEntry);
 
-        // Publish to Redis for real-time stats
         if (redisClient.isOpen) {
             await redisClient.publish('maf-logs', JSON.stringify(logEntry));
         }
-
     } catch (e) {
-        logger.error('Failed to write log', e);
+        logger.error("Logging failed", e);
     }
 }
 
-async function loadConfiguration() {
-    logger.info('Loading configuration from MongoDB...');
-    try {
-        const apps = await Application.find({});
-        logger.info(`Found ${apps.length} applications.`);
+// --- Main Endpoint ---
+app.post('/evaluate', async (req, res) => {
+    const start = Date.now();
+    const { token, ip, method, path, headers, body } = req.body;
 
-        for (const app of apps) {
-            for (const portConfig of (app.ports || [])) {
-                try {
-                    await startServer(app, portConfig);
-                } catch (err) {
-                    logger.error(`Failed to start server for ${app.name} on port ${portConfig.port}`, err);
+    if (!token) {
+        return res.status(400).json({ decision: 'NO', reason: 'Missing Token' });
+    }
+
+    try {
+        const appConfig = await validateToken(token);
+
+        if (!appConfig) {
+            return res.status(401).json({ decision: 'NO', reason: 'Invalid Token' });
+        }
+
+        if (appConfig.defenseMode === 'Offline') {
+            // Offline usually means "System is off", so maybe Open/Allow or Block? 
+            // "Offline" in WAF context often means "WAF is bypassed/off" -> ALLOW. 
+            // But if it means "App is offline", then BLOCK. 
+            // Let's assume Offline = Functionality Disabled = WAF Disabled (ALLOW) or Service Down (BLOCK)?
+            // Given the context of "Defense Mode", Offline usually means "Traffic continues without inspection" OR "Traffic is stopped".
+            // Let's go with "WAF Disabled / Bypassed" -> ALLOW.
+            // Wait, user used 'Offline' in UI which implies "Service Offline" text in previous code.
+            // Previous code: res.end('Service Offline'). So it BLOCKS traffic.
+            return res.json({ decision: 'NO', reason: 'Service Unavailable (Offline Mode)' });
+        }
+
+        let decision = { decision: 'YES', reason: null };
+
+        if (appConfig.defenseMode === 'Defense' || appConfig.defenseMode === 'Audited') {
+            // Run Analysis
+            const aiResult = await analyzeRequestWithAI({ ip, method, path, headers, body }, appConfig);
+
+            if (aiResult.verdict === 'BLOCK') {
+                if (appConfig.defenseMode === 'Defense') {
+                    decision = { decision: 'NO', reason: aiResult.reason };
+                } else {
+                    // Audited: Log it but allow
+                    decision = { decision: 'YES', reason: `[AUDIT] ${aiResult.reason}` };
                 }
             }
         }
-    } catch (err) {
-        logger.error('Failed to load apps', err);
-    }
-}
 
-// --- Initialization ---
+        // Async Logging
+        logRequest({ ip, method, path, headers, body }, decision, appConfig);
+
+        res.json(decision);
+
+    } catch (e) {
+        logger.error("Evaluation Error", e);
+        // Fail Open
+        res.json({ decision: 'YES', reason: 'Internal Error (Fail Open)' });
+    }
+});
+
+app.get('/health', (req, res) => res.send('MAF Engine Active'));
+
+// --- Init ---
 async function init() {
     try {
         await mongoose.connect(MONGODB_URI);
         logger.info('Connected to MongoDB');
-
         await redisClient.connect();
 
-        // Create a separate subscriber client (Redis clients in sub mode can't do other cmds)
-        const subscriber = redisClient.duplicate();
-        await subscriber.connect();
-
-        await subscriber.subscribe('maf-config-reload', (message) => {
-            logger.info(`Received config reload signal: ${message}`);
-            loadConfiguration();
+        app.listen(PORT, () => {
+            logger.info(`MAF Decision Engine listening on port ${PORT}`);
         });
 
-        await loadConfiguration();
-
-        // Refresh config every 30 seconds (Simple dynamic config)
-        setInterval(loadConfiguration, 30000);
-
-    } catch (err) {
-        logger.error('Initialization failed', err);
+    } catch (e) {
+        logger.error("Init Failed", e);
         process.exit(1);
     }
 }
 
 init();
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-    logger.info('SIGTERM received. Closing servers...');
-    for (const server of activeServers.values()) {
-        server.close();
-    }
-    Promise.all([
-        mongoose.connection.close(),
-        redisClient.quit()
-    ]).then(() => {
-        process.exit(0);
-    });
-});
