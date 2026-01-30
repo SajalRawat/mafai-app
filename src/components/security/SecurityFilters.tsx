@@ -3,6 +3,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { Calendar, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+import { ApplicationSelector } from "@/components/common/ApplicationSelector";
+
 export interface FilterState {
     search?: string;
     from?: string;
@@ -14,9 +16,11 @@ interface SecurityFiltersProps {
     onViewChange: (view: "EVENTS" | "LOGS") => void;
     pageType: "ATTACKS" | "ALLOW_DENY";
     onFilterChange?: (filters: FilterState) => void;
+    selectedAppId?: string | null;
+    onAppChange?: (appId: string | null) => void;
 }
 
-export function SecurityFilters({ view, onViewChange, pageType, onFilterChange }: SecurityFiltersProps) {
+export function SecurityFilters({ view, onViewChange, pageType, onFilterChange, selectedAppId, onAppChange }: SecurityFiltersProps) {
     const [openPicker, setOpenPicker] = useState<"start" | "end" | null>(null);
     const [startDate, setStartDate] = useState<string | null>(null);
     const [endDate, setEndDate] = useState<string | null>(null);
@@ -248,6 +252,7 @@ export function SecurityFilters({ view, onViewChange, pageType, onFilterChange }
                         />
                     </div>
 
+                    {/* Date Pickers */}
                     <div className="relative group" ref={openPicker === "start" ? pickerRef : null}>
                         <div
                             className={cn(
@@ -282,12 +287,19 @@ export function SecurityFilters({ view, onViewChange, pageType, onFilterChange }
                     </div>
                 </div>
 
-                <button
-                    onClick={handleApplyFilters}
-                    className="px-4 py-2 border border-teal-200 text-teal-500 rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-teal-50 transition-all flex items-center gap-2"
-                >
-                    Refresh
-                </button>
+                {/* Right Side Actions */}
+                <div className="flex items-center gap-3">
+                    <ApplicationSelector
+                        selectedAppId={selectedAppId || null}
+                        onChange={(id) => onAppChange?.(id)}
+                    />
+                    <button
+                        onClick={handleApplyFilters}
+                        className="px-4 py-2 border border-teal-200 text-teal-500 rounded-lg text-[11px] font-black uppercase tracking-wider hover:bg-teal-50 transition-all flex items-center gap-2"
+                    >
+                        Refresh
+                    </button>
+                </div>
             </div>
         </div>
     );
