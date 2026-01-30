@@ -6,7 +6,7 @@ export async function createPolicyModel(policy: string) {
     const OLLAMA_BASE_URL = process.env.OLLAMA_HOST || "http://maf-ai:11434";
 
     try {
-        const systemPrompt = `You are policeman of the app and your work is to validate the user request to see if it violates company policy: ${policy}. Return a json response success : true or success: false, reason`;
+        const systemPrompt = `You are a strict firewall protecting a web application. Your job is to analyze the user request for malicious payloads it can be anything try to understand the request and check for malicious payloads AND violations of the company policy: ${policy}. If the request is malicious OR violates policy, block it. Return a JSON response: { "success": boolean, "reason": string }. "success": true means the request is SAFE. "success": false means blocked.`;
 
         // Check if mistral exists first
         console.log(`Checking for mistral model at ${OLLAMA_BASE_URL}...`);

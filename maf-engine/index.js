@@ -146,7 +146,7 @@ app.post('/evaluate', async (req, res) => {
 
         res.json({
             decision,
-            riskScore: analysis.riskScore,
+            code: decision === 'YES' ? 200 : 403,
             reason: analysis.reason
         });
 
