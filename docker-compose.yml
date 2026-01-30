@@ -1,0 +1,100 @@
+services:
+  maf-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maf-ui
+    image: maf-ui:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/maf_db
+      - REDIS_URI=redis://redis:6379
+      - NODE_ENV=production
+      - OLLAMA_HOST=http://maf-ai:11434
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - maf-network
+    restart: always
+
+  maf-engine:
+    build:
+      context: ./maf-engine
+      dockerfile: Dockerfile
+    container_name: maf-engine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "18455:18455"
+      - "23452:23452"
+      - "8000-8100:8000-8100"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/maf_db
+      - REDIS_URI=redis://redis:6379
+    depends_on:
+      - mongo
+      - redis
+    networks:
+      - maf-network
+    restart: always
+
+  mongo:
+    image: mongo:6.0
+    container_name: maf-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - maf-network
+    restart: always
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: maf-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - maf-network
+    restart: always
+
+  maf-ai:
+    image: ollama/ollama:latest
+    container_name: maf-ai
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - maf-network
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  maf-model-puller:
+    image: curlimages/curl:latest
+    container_name: maf-model-puller
+    depends_on:
+      - maf-ai
+    networks:
+      - maf-network
+    command: >
+      /bin/sh -c " echo 'Waiting for Ollama to be ready...'; until curl -s http://maf-ai:11434/ > /dev/null; do sleep 2; done; echo 'Ollama is ready. Triggering mistral model pull...'; curl -X POST http://maf-ai:11434/api/pull -d '{\"name\": \"mistral\"}'; echo 'Model pull completed.'; "
+
+networks:
+  maf-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:
+  ollama_data:

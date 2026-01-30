@@ -1,0 +1,34 @@
+< !DOCTYPE html><html><head><meta charset="UTF-8" /><link rel="icon" href="-" type="image/png" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="commit" content="undefined" /><meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate"><meta http-equiv="pragram" content="no-cache">< !-- <title>MAF Community Edition</title>--><style type="text/css">@font-face {
+  font-family: "Mono";
+  src: url("/fonts/Mono.ttf");
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Mono-Bold";
+  src: url("/fonts/JetBrainsMono-Bold.ttf");
+}
+
+@font-face {
+  font-family: "AlimamaShuHeiTi";
+  src: url("/fonts/AlimamaShuHeiTi-Bold.woff2");
+}
+
+</style><script src="/echarts/echarts.5.4.1.min.js"></script><script src="/echarts/china.js"></script><script src="/echarts/world.js"></script><script src="/markdown/marked.min.js"></script><script src="/geo/geo.js"></script><script type="module" crossorigin src="/assets/index-BiE1Gddd.js"></script><link rel="modulepreload" crossorigin href="/assets/react-BKT_wtRu.js"><link rel="modulepreload" crossorigin href="/assets/mui-WA110txg.js"><link rel="modulepreload" crossorigin href="/assets/three-CTNVStHm.js"><link rel="modulepreload" crossorigin href="/assets/animated-svg-lNiKHAdV.js"></head><body><div id="root"></div><script> // define resize throttle event
+
+(function () {
+    var timer=0;
+    var event=new Event("lazy_resize");
+
+    window.addEventListener("resize", function () {
+        clearTimeout(timer);
+
+        timer=setTimeout(function () {
+            window.dispatchEvent(event);
+          }
+
+          , 1000);
+      });
+  })();
+</script></body></html>

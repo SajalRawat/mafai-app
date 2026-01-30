@@ -1,0 +1,17 @@
+{
+    "name": "maf-engine",
+    "version": "1.0.0",
+    "description": "WAF Engine for MAF",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js"
+    },
+    "dependencies": {
+        "http-proxy": "^1.18.1",
+        "mongoose": "^8.1.1",
+        "redis": "^4.6.13",
+        "pino": "^8.19.0"
+    },
+    "author": "",
+    "license": "ISC"
+}
