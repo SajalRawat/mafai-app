@@ -143,13 +143,15 @@ app.post('/evaluate', async (req, res) => {
     const { token, request } = req.body;
 
     if (!token || !request) {
-        return res.status(400).json({ decision: 'NO', reason: 'Invalid payload' });
+        logger.warn('Invalid payload received: missing token or request', { hasToken: !!token, hasRequest: !!request });
+        return res.status(400).json({ decision: 'NO', reason: 'Invalid payload: missing token or request' });
     }
 
     try {
         const config = await getAppConfig(token);
 
         if (!config) {
+            logger.warn('Unauthorized request: Invalid Application Token', { token });
             return res.status(401).json({ decision: 'NO', reason: 'Invalid Application Token' });
         }
 
