@@ -49,11 +49,65 @@ const Log = mongoose.models.Log || mongoose.model('Log', LogSchema);
 app.use(cors());
 app.use(bodyParser.json());
 
+// --- Security Constants ---
+const SECURITY_PATTERNS = {
+    SQLi: [
+        /(\%27)|(\')|(\-\-)|(\%23)|(#)/i,
+        /((\%3D)|(=))[^\n]*((\%27)|(\')|(\-\-)|(\%3B)|(;))/i,
+        /\w*((\%27)|(\'))((\%6F)|o|(\%4F))((\%72)|r|(\%52))/i,
+        /((\%27)|(\'))union/i,
+        /exec(\s|\+)+(s|x)p\w+/i,
+        /UNION(\s|\+)+SELECT/i,
+        /DROP(\s|\+)+TABLE/i,
+        /INSERT(\s|\+)+INTO/i,
+        /SELECT(\s|\+)+.+FROM/i,
+        /UPDATE(\s|\+)+.+SET/i,
+        /DELETE(\s|\+)+FROM/i
+    ],
+    XSS: [
+        /<script.*?>.*?<\/script>/is,
+        /javascript:/i,
+        /on\w+=(\"|'|%22|%27).*/i,
+        /(\%3C)|<|((\%3E)|>)/i
+    ],
+    Traversal: [
+        /(\.\.\/)+/i,
+        /(\%2e\%2e\%2f)+/i,
+        /\/etc\/passwd/i,
+        /\/windows\/win.ini/i
+    ]
+};
+
 // --- In-Memory Cache (Simple) ---
 const appCache = new Map(); // token -> { config, timestamp }
 const CACHE_TTL = 30 * 1000; // 30 seconds
 
 // --- Helper Functions ---
+
+function analyzeRequestWithRegex(requestData) {
+    const checkString = (str) => {
+        if (!str) return null;
+        for (const [type, patterns] of Object.entries(SECURITY_PATTERNS)) {
+            for (const pattern of patterns) {
+                if (pattern.test(str)) {
+                    return { verdict: 'BLOCK', reason: `Pattern Match: ${type}` };
+                }
+            }
+        }
+        return null;
+    };
+
+    const urlResult = checkString(requestData.url || requestData.path);
+    if (urlResult) return urlResult;
+
+    if (requestData.body) {
+        const bodyStr = typeof requestData.body === 'string' ? requestData.body : JSON.stringify(requestData.body);
+        const bodyResult = checkString(bodyStr);
+        if (bodyResult) return bodyResult;
+    }
+
+    return { verdict: 'ALLOW', reason: null };
+}
 
 async function getAppConfig(token) {
     const now = Date.now();
@@ -81,21 +135,14 @@ async function getAppConfig(token) {
 
 async function analyzeWithAI(reqData, aiModel) {
     try {
-        const prompt = `
-        You are a Model Application Firewall (MAF). Analyze this request for security threats (SQLi, XSS, Path Traversal, etc):
-        Method: ${reqData.method}
-        Path: ${reqData.path}
-        Headers: ${JSON.stringify(reqData.headers)}
-        Body: ${JSON.stringify(reqData.body)}
+        const prompt = `[WAF] Analyze for SQLi, XSS, Path Traversal.
+Method: ${reqData.method}
+Path: ${reqData.path}
+Body: ${JSON.stringify(reqData.body).substring(0, 500)}
 
-        If the body or path contains suspicious strings like <script>, UNION SELECT, ../, or common attack patterns, mark as threat: true.
-        Return ONLY a JSON object:
-        {
-            "threat": boolean,
-            "riskScore": number (0-100),
-            "reason": "short explanation"
-        }
-        `;
+Constraint: Be extremely strict. Any suspicious pattern = threat:true.
+Output JSON ONLY: {"threat": boolean, "riskScore": 0-100, "reason": "reason"}
+`;
 
         const response = await fetch(OLLAMA_URL, {
             method: 'POST',
@@ -159,6 +206,29 @@ app.post('/evaluate', async (req, res) => {
         if (!config) {
             logger.warn('Unauthorized request: Invalid Application Token', { token });
             return res.status(401).json({ decision: 'NO', reason: 'Invalid Application Token' });
+        }
+
+        // --- Log-Only Override (e.g. from local regex check in package) ---
+        if (req.body.logOnly || request.method === 'GET') {
+            const isBlocked = req.body.verdict === 'BLOCK' || (request.method === 'GET' && analyzeRequestWithRegex(request).verdict === 'BLOCK');
+            const analysis = {
+                threat: isBlocked,
+                riskScore: isBlocked ? 100 : 0,
+                reason: req.body.reason || (isBlocked ? 'Blocked by Engine Regex' : 'AI skipped for GET')
+            };
+            sendTelemetry(token, request, isBlocked ? 'NO' : 'YES', analysis);
+
+            // If it was a log-only request from the package, we return a special status
+            if (req.body.logOnly) {
+                return res.json({ decision: 'LOGGED', reason: 'Log Only Request processed' });
+            }
+
+            // Otherwise, if it's a direct evaluate call for a GET request, return YES/NO
+            return res.json({
+                decision: isBlocked ? 'NO' : 'YES',
+                code: isBlocked ? 403 : 200,
+                reason: analysis.reason
+            });
         }
 
         // 1. Offline Mode handling
