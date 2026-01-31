@@ -135,13 +135,18 @@ async function getAppConfig(token) {
 
 async function analyzeWithAI(reqData, aiModel) {
     try {
-        const prompt = `[WAF] Analyze for SQLi, XSS, Path Traversal.
+        const prompt = `[WAF] Analyze the following HTTP request body for security threats (SQLi, XSS, Path Traversal, Command Injection).
 Method: ${reqData.method}
 Path: ${reqData.path}
-Body: ${JSON.stringify(reqData.body).substring(0, 500)}
+Body: ${JSON.stringify(reqData.body).substring(0, 1000)}
 
-Constraint: Be extremely strict. Any suspicious pattern = threat:true.
-Output JSON ONLY: {"threat": boolean, "riskScore": 0-100, "reason": "reason"}
+Instructions:
+1. Ignore harmless inputs like simple text, emails, standard JSON data, or safe HTML (e.g., <b>bold</b>).
+2. ONLY flag as a threat if there is a clear, actionable attack vector.
+3. Distinguish between discussing code (e.g., "how to fix XSS") and executing code (e.g., actual <script> tag injection).
+4. Be smart: "SELECT * FROM users" in a search query is suspicious, but "I like SQL" is not.
+
+Output JSON ONLY: {"threat": boolean, "riskScore": 0-100, "reason": "concise reason"}
 `;
 
         const response = await fetch(OLLAMA_URL, {
