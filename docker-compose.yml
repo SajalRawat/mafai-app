@@ -25,11 +25,7 @@ services:
       dockerfile: Dockerfile
     container_name: maf-engine
     ports:
-      - "80:80"
-      - "443:443"
-      - "18455:18455"
-      - "23452:23452"
-      - "8000-8100:8000-8100"
+      - "3001:3001"
     environment:
       - MONGODB_URI=mongodb://mongo:27017/maf_db
       - REDIS_URI=redis://redis:6379

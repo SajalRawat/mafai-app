@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const pino = require('pino');
+const mongoose = require('mongoose');
 const crypto = require('crypto');
 
 const logger = pino({ level: 'info' });
@@ -9,15 +10,47 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // --- Configuration ---
-const DASHBOARD_URL = process.env.DASHBOARD_URL || 'http://maf-ui:3000'; // Internal Docker URL
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://mongo:27017/maf_db';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://maf-ai:11434/api/generate';
+
+// --- Database Connection ---
+mongoose.connect(MONGODB_URI)
+    .then(() => logger.info('Connected to MongoDB'))
+    .catch(err => logger.error('MongoDB connection error:', err));
+
+// --- Schemas ---
+const ApplicationSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    token: { type: String, required: true, unique: true, index: true },
+    defenseMode: { type: String, enum: ['DEFENSE', 'AUDITED', 'OFFLINE'], default: 'DEFENSE' },
+    aiModel: { type: String, default: 'mistral' },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const LogSchema = new mongoose.Schema({
+    token: { type: String, required: true, index: true },
+    time: { type: String, required: true },
+    ip: { type: String, required: true },
+    method: { type: String, required: true },
+    uri: { type: String, required: true },
+    status: { type: Number, required: true },
+    size: { type: String, default: '0B' },
+    userAgent: { type: String },
+    attackType: { type: String },
+    aiAnalysis: { type: String },
+    createdAt: { type: Number, default: Date.now }
+});
+
+const Application = mongoose.models.Application || mongoose.model('Application', ApplicationSchema);
+const Log = mongoose.models.Log || mongoose.model('Log', LogSchema);
 
 app.use(cors());
 app.use(bodyParser.json());
 
 // --- In-Memory Cache (Simple) ---
 const appCache = new Map(); // token -> { config, timestamp }
-const CACHE_TTL = 60 * 1000; // 1 minute
+const CACHE_TTL = 30 * 1000; // 30 seconds
 
 // --- Helper Functions ---
 
@@ -30,20 +63,17 @@ async function getAppConfig(token) {
     }
 
     try {
-        const response = await fetch(`${DASHBOARD_URL}/api/internal/applications/validate?token=${token}`);
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        if (data.valid) {
+        const app = await Application.findOne({ token }).lean();
+        if (app) {
             const config = {
-                defenseMode: data.defenseMode,
-                aiModel: data.aiModel || 'mistral'
+                defenseMode: app.defenseMode,
+                aiModel: app.aiModel || 'mistral'
             };
             appCache.set(token, { config, timestamp: now });
             return config;
         }
     } catch (e) {
-        logger.error('Failed to validate token from dashboard', e);
+        logger.error('Failed to validate token from database', e);
     }
     return null;
 }
@@ -87,28 +117,23 @@ async function analyzeWithAI(reqData, aiModel) {
 
 async function sendTelemetry(token, reqData, verdict, analysis) {
     try {
-        const logEntry = {
-            id: crypto.randomUUID(),
+        const logEntry = new Log({
             token,
             time: new Date().toISOString(),
-            ip: reqData.ip,
-            method: reqData.method,
-            uri: reqData.path,
-            status: verdict === 'ALLOW' ? 200 : 403,
+            ip: reqData.ip || '0.0.0.0',
+            method: reqData.method || 'UNKNOWN',
+            uri: reqData.path || '/',
+            status: verdict === 'YES' ? 200 : 403,
             size: '0B',
-            userAgent: reqData.headers['user-agent'],
+            userAgent: reqData.headers['user-agent'] || 'unknown',
             attackType: analysis.threat ? analysis.reason : null,
-            aiAnalysis: analysis.reason
-        };
+            aiAnalysis: analysis.reason,
+            createdAt: Date.now()
+        });
 
-        fetch(`${DASHBOARD_URL}/api/logs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(logEntry)
-        }).catch(err => logger.error('Telemetry delivery failed', err));
-
+        await logEntry.save();
     } catch (e) {
-        logger.error('Failed to prepare telemetry', e);
+        logger.error('Failed to save telemetry to database', e);
     }
 }
 
@@ -118,7 +143,7 @@ app.post('/evaluate', async (req, res) => {
     const { token, request } = req.body;
 
     if (!token || !request) {
-        return res.status(400).json({ decision: 'YES', reason: 'Invalid payload' });
+        return res.status(400).json({ decision: 'NO', reason: 'Invalid payload' });
     }
 
     try {
