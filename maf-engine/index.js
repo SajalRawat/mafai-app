@@ -29,17 +29,18 @@ const ApplicationSchema = new mongoose.Schema({
 });
 
 const LogSchema = new mongoose.Schema({
+    id: { type: String, required: true, unique: true },
     token: { type: String, required: true, index: true },
     time: { type: String, required: true },
     ip: { type: String, required: true },
     method: { type: String, required: true },
     uri: { type: String, required: true },
     status: { type: Number, required: true },
-    size: { type: String, default: '0B' },
+    size: { type: String, required: true },
     userAgent: { type: String },
     attackType: { type: String },
     aiAnalysis: { type: String },
-    createdAt: { type: Number, default: Date.now }
+    createdAt: { type: Date, default: Date.now }
 });
 
 const Application = mongoose.models.Application || mongoose.model('Application', ApplicationSchema);
@@ -81,12 +82,13 @@ async function getAppConfig(token) {
 async function analyzeWithAI(reqData, aiModel) {
     try {
         const prompt = `
-        You are a Web Application Firewall (WAF). Analyze this request for security threats:
+        You are a Model Application Firewall (MAF). Analyze this request for security threats (SQLi, XSS, Path Traversal, etc):
         Method: ${reqData.method}
         Path: ${reqData.path}
         Headers: ${JSON.stringify(reqData.headers)}
-        Body: ${JSON.stringify(reqData.body).substring(0, 1000)}
+        Body: ${JSON.stringify(reqData.body)}
 
+        If the body or path contains suspicious strings like <script>, UNION SELECT, ../, or common attack patterns, mark as threat: true.
         Return ONLY a JSON object:
         {
             "threat": boolean,
@@ -108,7 +110,9 @@ async function analyzeWithAI(reqData, aiModel) {
         if (!response.ok) throw new Error('Ollama failed');
 
         const data = await response.json();
-        return JSON.parse(data.response);
+        const analysis = JSON.parse(data.response);
+        logger.info('AI Analysis result:', analysis);
+        return analysis;
     } catch (e) {
         logger.error('AI Analysis failed', e);
         return { threat: false, riskScore: 0, reason: 'AI Fail Open' };
@@ -118,6 +122,7 @@ async function analyzeWithAI(reqData, aiModel) {
 async function sendTelemetry(token, reqData, verdict, analysis) {
     try {
         const logEntry = new Log({
+            id: crypto.randomUUID(),
             token,
             time: new Date().toISOString(),
             ip: reqData.ip || '0.0.0.0',
@@ -126,12 +131,13 @@ async function sendTelemetry(token, reqData, verdict, analysis) {
             status: verdict === 'YES' ? 200 : 403,
             size: '0B',
             userAgent: reqData.headers['user-agent'] || 'unknown',
-            attackType: analysis.threat ? analysis.reason : null,
+            attackType: analysis.threat ? analysis.reason : 'Clean',
             aiAnalysis: analysis.reason,
-            createdAt: Date.now()
+            createdAt: new Date()
         });
 
         await logEntry.save();
+        logger.info('Telemetry saved successfully', { id: logEntry.id });
     } catch (e) {
         logger.error('Failed to save telemetry to database', e);
     }
